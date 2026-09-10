@@ -1,5 +1,3 @@
-# enterprise_ai_shop
-
 # Langflow Agent Manager
 
 Веб-приложение на FastAPI для управления AI-агентами (flow) из Langflow.
