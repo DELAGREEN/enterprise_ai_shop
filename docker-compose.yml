@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  ia_shop_db:
+    image: postgres:16
+    container_name: ai_shop_db
+    restart: always
+    network_mode: bridge
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: ai_shop
+      POSTGRES_PASSWORD: ai_shop_password
+      POSTGRES_DB: ai_shop
+      TZ: Europe/Moscow
+    volumes:
+      - ./ai_shop_db:/var/lib/postgresql/data
+      - /etc/localtime:/etc/localtime:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ai_shop"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+  
+  ldap:
+    image: osixia/openldap:1.5.0
+    container_name: ldap
+    network_mode: bridge
+    ports:
+      - "389:389"
+      - "636:636"
+    environment:
+      - TZ=Europe/Moscow 
+      - LDAP_ORGANISATION=MyOrg
+      - LDAP_DOMAIN=example.com
+      - LDAP_ADMIN_PASSWORD=adminpass
+      - LDAP_CONFIG_PASSWORD=adminpass
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      #- ./ldap_db/init.ldif:/container/service/slapd/assets/config/bootstrap/ldif/init.ldif
+    command: --loglevel debug
+
+volumes:
+  ai_shop_db:
+  ldap_db:

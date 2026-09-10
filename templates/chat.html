@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block title %}{{ name }}{% endblock %}
+{% block head %}
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<style>
+    .chat-wrap { display: flex; flex-direction: column; height: calc(100vh - 200px); }
+    .messages { flex: 1; overflow-y: auto; padding: 12px; background: #fff; border-radius: 10px 10px 0 0; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
+    .msg { margin-bottom: 14px; padding: 10px 14px; border-radius: 10px; max-width: 85%; white-space: normal; word-wrap: break-word; line-height: 1.5; }
+    .msg.user { background: #dbeafe; margin-left: auto; }
+    .msg.bot { background: #f3f4f6; }
+    .msg pre { background: #111827; color: #f9fafb; padding: 10px; border-radius: 6px; overflow-x: auto; }
+    .msg code { background: #e5e7eb; padding: 2px 5px; border-radius: 4px; font-size: .9em; }
+    .msg pre code { background: transparent; padding: 0; }
+    .thinking { background: #fff7ed; border-left: 3px solid #f59e0b; padding: 10px 14px; margin-bottom: 10px; font-size: 0.9rem; color: #78350f; display: none; border-radius: 6px; }
+    .thinking.visible { display: block; }
+    .input-row { display: flex; gap: 8px; padding: 12px; background: #fff; border-radius: 0 0 10px 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); border-top: 1px solid #e5e7eb; }
+    .input-row input[type=text] { flex: 1; }
+    .toolbar { display: flex; gap: 8px; margin-bottom: 10px; }
+</style>
+{% endblock %}
+{% block content %}
+<h1>{{ name }}</h1>
+<div class="toolbar">
+    <button class="secondary" id="deepthinkBtn">🧠 DeepThink</button>
+    <button class="secondary" id="searchBtn">🔍 Search</button>
+</div>
+<div class="chat-wrap">
+    <div class="messages" id="messages"></div>
+    <form class="input-row" id="chatForm" autocomplete="off">
+        <input type="text" id="msgInput" placeholder="Напишите сообщение..." required>
+        <button type="submit">Отправить</button>
+    </form>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const flowId = "{{ flow_id }}";
+const messagesEl = document.getElementById('messages');
+const form = document.getElementById('chatForm');
+const input = document.getElementById('msgInput');
+const deepthinkBtn = document.getElementById('deepthinkBtn');
+const searchBtn = document.getElementById('searchBtn');
+
+let showThinking = true;
+
+deepthinkBtn.addEventListener('click', () => {
+    showThinking = !showThinking;
+    document.querySelectorAll('.thinking').forEach(el => {
+        el.classList.toggle('visible', showThinking);
+    });
+    deepthinkBtn.style.opacity = showThinking ? '1' : '0.5';
+});
+
+searchBtn.addEventListener('click', () => {
+    alert('Функция поиска пока не реализована');
+});
+
+function escapeHtml(s) {
+    return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function addUserMessage(text) {
+    const div = document.createElement('div');
+    div.className = 'msg user';
+    div.textContent = text;
+    messagesEl.appendChild(div);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const text = input.value.trim();
+    if (!text) return;
+
+    addUserMessage(text);
+    input.value = '';
+
+    const botDiv = document.createElement('div');
+    botDiv.className = 'msg bot';
+    botDiv.innerHTML = '<em>…</em>';
+    messagesEl.appendChild(botDiv);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+
+    try {
+        const res = await fetch(`/chat/${flowId}/send`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({message: text})
+        });
+        if (!res.ok) {
+            const errText = await res.text();
+            throw new Error('HTTP ' + res.status + ': ' + errText);
+        }
+        const data = await res.json();
+        botDiv.innerHTML = '';
+
+        if (data.thinking) {
+            const t = document.createElement('div');
+            t.className = 'thinking' + (showThinking ? ' visible' : '');
+            t.innerHTML = '<strong>🧠 Мышление модели:</strong><br>' + marked.parse(data.thinking);
+            botDiv.appendChild(t);
+        }
+
+        const content = document.createElement('div');
+        content.innerHTML = marked.parse(data.text || '');
+        botDiv.appendChild(content);
+    } catch (err) {
+        botDiv.innerHTML = '<span style="color:#dc2626;">Ошибка: ' + escapeHtml(err.message) + '</span>';
+    }
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+});
+
+input.focus();
+</script>
+{% endblock %}

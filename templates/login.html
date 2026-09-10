@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Вход{% endblock %}
+{% block content %}
+<div class="card" style="max-width: 400px; margin: 60px auto;">
+    <h1>Вход в админку</h1>
+    {% if error %}<div class="error">{{ error }}</div>{% endif %}
+    <form method="post" action="/auth/login">
+        <div style="margin-bottom: 12px;">
+            <label>Логин
+                <input type="text" name="username" required autofocus>
+            </label>
+        </div>
+        <div style="margin-bottom: 16px;">
+            <label>Пароль
+                <input type="password" name="password" required>
+            </label>
+        </div>
+        <button type="submit" style="width: 100%;">Войти</button>
+    </form>
+</div>
+{% endblock %}

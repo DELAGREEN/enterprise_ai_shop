@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Агенты{% endblock %}
+{% block content %}
+<h1>Доступные агенты</h1>
+{% if agents %}
+<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px;">
+    {% for a in agents %}
+    <a href="/chat/{{ a.id }}" style="text-decoration: none; color: inherit;">
+        <div class="card" style="height: 100%; transition: transform .15s;">
+            <div style="font-size: 2rem;">{{ a.icon }}</div>
+            <h3 style="margin: 8px 0;">{{ a.name }}</h3>
+            <p class="muted" style="margin: 0;">{{ a.description or 'Без описания' }}</p>
+        </div>
+    </a>
+    {% endfor %}
+</div>
+{% else %}
+<div class="card">
+    <p>Нет доступных агентов</p>
+</div>
+{% endif %}
+{% endblock %}

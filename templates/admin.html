@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}Админка{% endblock %}
+{% block content %}
+<h1>Управление агентами</h1>
+<div class="card">
+    <table>
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Название</th>
+                <th>Описание</th>
+                <th>Статус</th>
+                <th>Действие</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for f in flows %}
+            <tr>
+                <td><code>{{ f.id }}</code></td>
+                <td>{{ f.name }}</td>
+                <td class="muted">{{ f.description or '—' }}</td>
+                <td>
+                    {% if f.is_published %}
+                        <span class="badge ok">Опубликован</span>
+                    {% else %}
+                        <span class="badge no">Нет</span>
+                    {% endif %}
+                </td>
+                <td>
+                    <button onclick="togglePublish('{{ f.id }}', {{ 'true' if not f.is_published else 'false' }})">
+                        {{ 'Опубликовать' if not f.is_published else 'Снять' }}
+                    </button>
+                </td>
+            </tr>
+        {% endfor %}
+        {% if not flows %}
+            <tr><td colspan="5" class="muted">Нет flow из Langflow</td></tr>
+        {% endif %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+async function togglePublish(flowId, publish) {
+    try {
+        const res = await fetch('/admin/publish', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({flow_id: flowId, publish: publish})
+        });
+        if (res.ok) {
+            location.reload();
+        } else {
+            alert('Ошибка: ' + res.status);
+        }
+    } catch (e) {
+        alert('Ошибка сети: ' + e.message);
+    }
+}
+</script>
+{% endblock %}
