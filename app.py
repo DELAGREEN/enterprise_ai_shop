@@ -2,7 +2,7 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 
 from database import Base, engine
 from session import get_current_user
@@ -28,12 +28,24 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Langflow Agent Manager", lifespan=lifespan)
 
 
+# Пути, доступные без сессии
+PUBLIC_PATHS = {"/auth/login", "/auth/logout", "/favicon.ico"}
+
+
 @app.middleware("http")
-async def protect_admin(request: Request, call_next):
+async def auth_middleware(request: Request, call_next):
     path = request.url.path
-    if path.startswith("/admin"):
-        if not get_current_user(request):
-            return RedirectResponse(url="/auth/login", status_code=302)
+
+    if path in PUBLIC_PATHS or path.startswith("/static"):
+        return await call_next(request)
+
+    user = get_current_user(request)
+    if not user:
+        if request.method in ("GET", "HEAD"):
+            login_url = f"/auth/login?next={path}"
+            return RedirectResponse(url=login_url, status_code=302)
+        return JSONResponse({"detail": "Not authenticated"}, status_code=401)
+
     return await call_next(request)
 
 

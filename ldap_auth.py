@@ -14,12 +14,7 @@ def _build_server_url() -> str:
 
 
 def ldap_authenticate(username: str, password: str):
-    """
-    Пытается забиндиться под uid=<username>,<LDAP_BASE_DN>.
-    Возвращает (True, user_dn) при успехе, (False, None) иначе.
-    """
-    logger.debug("Попытка аутентификации пользователя: %s", username)
-
+    """Bind под uid=<username>,<LDAP_BASE_DN>. Возвращает (ok, user_dn)."""
     if not username or not password:
         return False, None
 
@@ -34,10 +29,8 @@ def ldap_authenticate(username: str, password: str):
         if config.LDAP_USE_SSL:
             conn.set_option(ldap.OPT_X_TLS_REQUIRE_CERT, ldap.OPT_X_TLS_NEVER)
 
-        logger.debug("User DN: %s", user_dn)
-        logger.info("Пробуем bind с DN: %s", user_dn)
+        logger.info("Bind с DN: %s", user_dn)
         conn.simple_bind_s(user_dn, password)
-        logger.info("Bind успешен")
         try:
             conn.unbind_s()
         except Exception:
@@ -45,10 +38,10 @@ def ldap_authenticate(username: str, password: str):
         return True, user_dn
 
     except ldap.INVALID_CREDENTIALS as e:
-        logger.error("Неверные учётные данные для %s: %s", username, e, exc_info=True)
+        logger.warning("Неверные учётные данные для %s: %s", username, e)
         return False, None
     except ldap.NO_SUCH_OBJECT as e:
-        logger.error("DN не найден: %s — %s", user_dn, e, exc_info=True)
+        logger.warning("DN не найден: %s — %s", user_dn, e)
         return False, None
     except ldap.SERVER_DOWN as e:
         logger.error("LDAP-сервер недоступен: %s", e, exc_info=True)
@@ -60,17 +53,17 @@ def ldap_authenticate(username: str, password: str):
 
 def ldap_is_admin(user_dn: str) -> bool:
     """
-    Проверяет, входит ли пользователь в LDAP_ADMIN_GROUP.
-    Если группа не задана — считается, что все админы.
+    Проверяет членство user_dn в LDAP_ADMIN_GROUP.
+    Если LDAP_ADMIN_GROUP не задан — LDAP-пользователи НЕ получают админку.
     """
     if not config.LDAP_ADMIN_GROUP:
-        logger.info("LDAP_ADMIN_GROUP не задан — права администратора у всех")
-        return True
+        logger.warning(
+            "LDAP_ADMIN_GROUP не задан — LDAP-пользователи не получают прав админа"
+        )
+        return False
 
     try:
         server_url = _build_server_url()
-        logger.info("Проверка группы %s через %s", config.LDAP_ADMIN_GROUP, server_url)
-
         conn = ldap.initialize(server_url)
         conn.set_option(ldap.OPT_REFERRALS, 0)
         conn.set_option(ldap.OPT_PROTOCOL_VERSION, 3)
@@ -91,35 +84,37 @@ def ldap_is_admin(user_dn: str) -> bool:
             return False
 
         members = result[0][1].get("member", [])
-        # member может быть bytes
         members = [m.decode() if isinstance(m, bytes) else m for m in members]
-        is_admin = user_dn in members
-        logger.info("Пользователь %s %s в группе", user_dn, "входит" if is_admin else "НЕ входит")
-        return is_admin
+        return user_dn in members
 
     except Exception as e:
         logger.error("Не удалось проверить группу: %s", e, exc_info=True)
         return False
 
 
-def authenticate(username: str, password: str) -> bool:
+def authenticate_full(username: str, password: str) -> dict | None:
     """
-    Высокоуровневая обёртка:
-      1) bind в LDAP
-      2) если группа админов задана — проверка членства
-      3) fallback на ADMIN_USERNAME / ADMIN_PASSWORD из .env
+    Полная аутентификация.
+    Возвращает словарь для сессии:
+        {"username": ..., "user_dn": ..., "is_admin": bool}
+    или None, если вход неудачен.
     """
     ok, user_dn = ldap_authenticate(username, password)
 
     if ok:
-        if config.LDAP_ADMIN_GROUP and not ldap_is_admin(user_dn):
-            logger.warning("Пользователь %s не админ — доступ запрещён", username)
-            return False
-        return True
+        is_admin = ldap_is_admin(user_dn) if config.LDAP_ADMIN_GROUP else False
+        logger.info(
+            "Вход %s (%s), is_admin=%s", username, user_dn, is_admin
+        )
+        return {"username": username, "user_dn": user_dn, "is_admin": is_admin}
 
-    # Fallback на .env
+    # Fallback из .env — всегда админ
     if username == config.ADMIN_USERNAME and password == config.ADMIN_PASSWORD:
-        logger.info("Fallback-аутентификация для %s", username)
-        return True
+        logger.info("Fallback-вход администратора: %s", username)
+        return {
+            "username": username,
+            "user_dn": f"cn={username},dc=fallback",
+            "is_admin": True,
+        }
 
-    return False
+    return None

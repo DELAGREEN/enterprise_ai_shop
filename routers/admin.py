@@ -18,10 +18,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/admin")
 
 
-def _require_user(request: Request):
+def _require_admin(request: Request) -> dict:
     user = get_current_user(request)
     if not user:
         raise HTTPException(status_code=401, detail="Not authenticated")
+    if not user.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Только администратор")
     return user
 
 
@@ -30,6 +32,9 @@ async def admin_page(request: Request, db: AsyncSession = Depends(get_db)):
     user = get_current_user(request)
     if not user:
         return RedirectResponse(url="/auth/login", status_code=302)
+    if not user.get("is_admin"):
+        # Обычный пользователь → на главную
+        return RedirectResponse(url="/", status_code=302)
 
     client = LangflowClient()
     flows = await client.get_all_flows()
@@ -52,7 +57,7 @@ async def admin_page(request: Request, db: AsyncSession = Depends(get_db)):
 
     return templates.TemplateResponse(
         "admin.html",
-        {"request": request, "flows": items, "user": user.get("user")},
+        {"request": request, "flows": items, "user": user},
     )
 
 
@@ -67,7 +72,7 @@ async def publish(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ):
-    _require_user(request)
+    user = _require_admin(request)  # 403 для не-админов
 
     result = await db.execute(
         select(FlowPublication).where(FlowPublication.flow_id == payload.flow_id)
@@ -91,6 +96,9 @@ async def publish(
 
     await db.commit()
     logger.info(
-        "Flow %s => %s", payload.flow_id, "published" if payload.publish else "unpublished"
+        "Админ %s: flow %s => %s",
+        user.get("username"),
+        payload.flow_id,
+        "published" if payload.publish else "unpublished",
     )
     return {"status": "ok"}

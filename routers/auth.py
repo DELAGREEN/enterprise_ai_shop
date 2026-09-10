@@ -1,10 +1,11 @@
 import logging
+from urllib.parse import quote
 
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from ldap_auth import authenticate
-from session import MAX_AGE, SESSION_COOKIE, create_session
+from ldap_auth import authenticate_full
+from session import MAX_AGE, SESSION_COOKIE, create_session, get_current_user
 from templating import templates
 
 logger = logging.getLogger(__name__)
@@ -12,20 +13,40 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _safe_next(next_url: str | None) -> str:
+    """Не позволяем редиректить на внешние домены."""
+    if not next_url or not next_url.startswith("/"):
+        return "/"
+    return next_url
+
+
 @router.get("/auth/login", response_class=HTMLResponse)
 async def login_page(request: Request):
+    # Уже залогинен — можно сразу отправлять дальше
+    if get_current_user(request):
+        return RedirectResponse(_safe_next(request.query_params.get("next")), 302)
     return templates.TemplateResponse(
-        "login.html", {"request": request, "error": None}
+        "login.html",
+        {
+            "request": request,
+            "error": None,
+            "next": request.query_params.get("next", ""),
+        },
     )
 
 
 @router.post("/auth/login")
 async def login_submit(
-    request: Request, username: str = Form(...), password: str = Form(...)
+    request: Request,
+    username: str = Form(...),
+    password: str = Form(...),
+    next: str = Form(""),
 ):
-    if authenticate(username, password):
-        token = create_session({"user": username})
-        resp = RedirectResponse(url="/admin", status_code=302)
+    user_data = authenticate_full(username, password)
+
+    if user_data:
+        token = create_session(user_data)
+        resp = RedirectResponse(url=_safe_next(next), status_code=302)
         resp.set_cookie(
             SESSION_COOKIE,
             token,
@@ -37,13 +58,17 @@ async def login_submit(
 
     return templates.TemplateResponse(
         "login.html",
-        {"request": request, "error": "Неверный логин или пароль"},
+        {
+            "request": request,
+            "error": "Неверный логин или пароль",
+            "next": next,
+        },
         status_code=401,
     )
 
 
 @router.get("/auth/logout")
-async def logout():
-    resp = RedirectResponse(url="/", status_code=302)
+async def logout(request: Request):
+    resp = RedirectResponse(url="/auth/login", status_code=302)
     resp.delete_cookie(SESSION_COOKIE)
     return resp

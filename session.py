@@ -20,7 +20,13 @@ def read_session(token: str):
 
 
 def get_current_user(request: Request):
+    """Возвращает словарь сессии или None."""
     token = request.cookies.get(SESSION_COOKIE)
     if not token:
         return None
     return read_session(token)
+
+
+def is_admin(request: Request) -> bool:
+    data = get_current_user(request)
+    return bool(data and data.get("is_admin"))

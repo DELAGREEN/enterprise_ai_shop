@@ -2,9 +2,10 @@
 {% block title %}Вход{% endblock %}
 {% block content %}
 <div class="card" style="max-width: 400px; margin: 60px auto;">
-    <h1>Вход в админку</h1>
+    <h1>Вход в систему</h1>
     {% if error %}<div class="error">{{ error }}</div>{% endif %}
     <form method="post" action="/auth/login">
+        <input type="hidden" name="next" value="{{ next or '' }}">
         <div style="margin-bottom: 12px;">
             <label>Логин
                 <input type="text" name="username" required autofocus>

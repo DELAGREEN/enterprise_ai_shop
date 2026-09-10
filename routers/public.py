@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_db
 from langflow_client import LangflowClient
 from models import FlowPublication
+from session import get_current_user
 from templating import templates
 
 router = APIRouter()
@@ -13,6 +14,7 @@ router = APIRouter()
 
 @router.get("/", response_class=HTMLResponse)
 async def index(request: Request, db: AsyncSession = Depends(get_db)):
+    user = get_current_user(request)  # middleware уже проверил, что он есть
     client = LangflowClient()
     flows = await client.get_all_flows()
 
@@ -35,5 +37,6 @@ async def index(request: Request, db: AsyncSession = Depends(get_db)):
             )
 
     return templates.TemplateResponse(
-        "index.html", {"request": request, "agents": agents}
+        "index.html",
+        {"request": request, "agents": agents, "user": user},
     )
