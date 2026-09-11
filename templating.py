@@ -1,14 +1,26 @@
 import os
+from datetime import datetime, timedelta, timezone
 
 from fastapi.responses import HTMLResponse
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 TEMPLATES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
 
+# Сдвиг локальной таймзоны от UTC в часах. МСК = 3.
+LOCAL_TZ_OFFSET_HOURS = int(os.getenv("LOCAL_TZ_OFFSET_HOURS", "3"))
+
+
+def localtime(dt: datetime | None, fmt: str = "%d.%m.%Y %H:%M") -> str:
+    """Naive-UTC из БД → локальное время → строка."""
+    if not dt:
+        return ""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    local = dt.astimezone(timezone(timedelta(hours=LOCAL_TZ_OFFSET_HOURS)))
+    return local.strftime(fmt)
+
 
 class Templates:
-    """Обёртка над Jinja2 с отключённым кэшем (для удобной разработки)."""
-
     def __init__(self, directory: str):
         self.env = Environment(
             loader=FileSystemLoader(directory),
@@ -16,6 +28,8 @@ class Templates:
             cache_size=0,
             auto_reload=True,
         )
+        # 👇 вот эта строка обязательна
+        self.env.filters["localtime"] = localtime
 
     def TemplateResponse(
         self,

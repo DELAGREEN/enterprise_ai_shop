@@ -3,13 +3,20 @@
 {% block head %}
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <style>
+    /* Растягиваем <main> на всю ширину и убираем боковые отступы */
+    main {
+        max-width: 100% !important;
+        padding: 12px 16px !important;
+    }
+
     .chat-layout {
         display: grid;
         grid-template-columns: 300px 1fr;
         gap: 16px;
-        height: calc(100vh - 160px);
+        height: calc(100vh - 100px);
         min-height: 480px;
     }
+
     /* Sidebar */
     .sidebar {
         background: #fff;
@@ -36,8 +43,8 @@
         flex-direction: column;
         gap: 4px;
         margin-bottom: 4px;
-        transition: background .15s;
         position: relative;
+        transition: background .15s;
     }
     .chat-item:hover { background: #f3f4f6; }
     .chat-item.active { background: #dbeafe; }
@@ -46,13 +53,8 @@
         font-size: .9rem;
         word-break: break-word;
         color: #111827;
-        text-decoration: none;
     }
-    .chat-item .date {
-        font-size: .72rem;
-        color: #6b7280;
-        margin-top: 2px;
-    }
+    .chat-item .date { font-size: .72rem; color: #6b7280; margin-top: 2px; }
     .chat-item .link {
         display: block;
         text-decoration: none;
@@ -73,6 +75,7 @@
         font-size: .75rem;
         line-height: 1;
     }
+
     /* Main chat */
     .chat-main {
         display: flex;
@@ -81,6 +84,7 @@
         border-radius: 10px;
         box-shadow: 0 1px 3px rgba(0,0,0,0.06);
         overflow: hidden;
+        min-width: 0;
     }
     .chat-header {
         padding: 12px 16px;
@@ -97,7 +101,7 @@
         margin-bottom: 14px;
         padding: 10px 14px;
         border-radius: 10px;
-        max-width: 85%;
+        max-width: 75%;
         word-wrap: break-word;
         line-height: 1.5;
         white-space: normal;
@@ -128,14 +132,52 @@
         border-radius: 6px;
     }
     .thinking.hidden { display: none; }
+    .empty-hint { color: #6b7280; font-size: .9rem; padding: 8px; }
+
+    /* Инлайн-редактирование названия */
+    .chat-item .title-input {
+        width: 100%;
+        font: inherit;
+        font-weight: 600;
+        font-size: .9rem;
+        padding: 2px 6px;
+        border: 1px solid #2563eb;
+        border-radius: 4px;
+        outline: none;
+        background: #fff;
+    }
+    .chat-item.editing .actions { display: none; }     /* во время редактирования кнопки не мешают */
+    .chat-item.editing { background: #eff6ff; cursor: default; }
+    .chat-item .title { cursor: text; }
+
+    /* Поле ввода */
     .input-row {
         display: flex;
         gap: 8px;
         padding: 12px;
         border-top: 1px solid #e5e7eb;
+        align-items: flex-end; /* кнопка прижата к низу textarea */
     }
-    .input-row input[type=text] { flex: 1; }
-    .empty-hint { color: #6b7280; font-size: .9rem; padding: 8px; }
+    .input-row textarea {
+        flex: 1;
+        resize: none;
+        border: 1px solid #d1d5db;
+        border-radius: 8px;
+        padding: 10px 12px;
+        font-family: inherit;
+        font-size: 0.95rem;
+        line-height: 1.4;
+        min-height: 42px;
+        max-height: 220px;      /* после этого — скролл */
+        overflow-y: hidden;     /* появится через JS при достижении max-height */
+        outline: none;
+        transition: border-color .15s;
+    }
+    .input-row textarea:focus { border-color: #2563eb; }
+    .input-row button {
+        align-self: flex-end;
+        height: 42px;
+    }
 </style>
 {% endblock %}
 {% block content %}
@@ -157,7 +199,7 @@
                  data-title="{{ c.title }}">
                 <a class="link" href="/chat/{{ flow_id }}/{{ c.id }}">
                     <div class="title">{{ c.title }}</div>
-                    <div class="date">{{ c.created_at.strftime('%d.%m.%Y %H:%M') }}</div>
+                    <div class="date">{{ c.created_at | localtime }}</div>
                 </a>
                 <div class="actions">
                     <button class="secondary btn-rename" title="Переименовать">✎</button>
@@ -190,7 +232,7 @@
             {% endfor %}
         </div>
         <form class="input-row" id="chatForm" autocomplete="off">
-            <input type="text" id="msgInput" placeholder="Напишите сообщение..." required>
+            <textarea id="msgInput" rows="1" placeholder="Напишите сообщение... (Enter — отправить, Shift+Enter — новая строка)" required></textarea>
             <button type="submit">Отправить</button>
         </form>
     </section>
@@ -209,7 +251,28 @@ const searchBtn = document.getElementById('searchBtn');
 
 let showThinking = true;
 
-/* ---- Рендер уже сохранённой истории ---- */
+/* ---------- Авторастущая textarea ---------- */
+const MAX_H = 220;
+
+function autosize() {
+    input.style.height = 'auto';
+    const newH = Math.min(input.scrollHeight, MAX_H);
+    input.style.height = newH + 'px';
+    input.style.overflowY = input.scrollHeight > MAX_H ? 'auto' : 'hidden';
+}
+
+input.addEventListener('input', autosize);
+autosize();
+
+/* Отправка по Enter, перенос строки по Shift+Enter */
+input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        form.requestSubmit();
+    }
+});
+
+/* ---------- Рендер уже сохранённой истории ---------- */
 function renderMarkdownInto(el, raw) {
     el.innerHTML = raw ? marked.parse(raw) : '';
 }
@@ -220,7 +283,7 @@ document.querySelectorAll('.msg .thinking-body').forEach(el => {
     renderMarkdownInto(el, el.getAttribute('data-raw') || '');
 });
 
-/* ---- DeepThink / Search ---- */
+/* ---------- DeepThink / Search ---------- */
 deepthinkBtn.addEventListener('click', () => {
     showThinking = !showThinking;
     document.querySelectorAll('.thinking').forEach(el => {
@@ -230,7 +293,7 @@ deepthinkBtn.addEventListener('click', () => {
 });
 searchBtn.addEventListener('click', () => alert('Функция поиска пока не реализована'));
 
-/* ---- Утилиты ---- */
+/* ---------- Утилиты ---------- */
 function escapeHtml(s) {
     return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
@@ -248,7 +311,7 @@ function appendUserMessage(text) {
     scrollBottom();
 }
 
-/* ---- Отправка ---- */
+/* ---------- Отправка ---------- */
 form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const text = input.value.trim();
@@ -256,6 +319,7 @@ form.addEventListener('submit', async (e) => {
 
     appendUserMessage(text);
     input.value = '';
+    autosize();
 
     const botDiv = document.createElement('div');
     botDiv.className = 'msg bot';
@@ -287,7 +351,6 @@ form.addEventListener('submit', async (e) => {
         content.innerHTML = marked.parse(data.text || '');
         botDiv.appendChild(content);
 
-        // Если чат был "Новый чат" — обновляем название в сайдбаре без перезагрузки
         const activeItem = document.querySelector('.chat-item.active');
         if (activeItem && activeItem.dataset.title === 'Новый чат' && data.title) {
             activeItem.dataset.title = data.title;
@@ -299,49 +362,159 @@ form.addEventListener('submit', async (e) => {
     scrollBottom();
 });
 
-/* ---- Переименование / удаление чата ---- */
+/* ---- Переименование (inline) / удаление чата ---- */
 document.querySelectorAll('.chat-item').forEach(item => {
     const id = item.dataset.id;
-    const title = item.dataset.title;
 
-    item.querySelector('.btn-rename').addEventListener('click', async (e) => {
+    item.querySelector('.btn-rename').addEventListener('click', (e) => {
         e.preventDefault();
         e.stopPropagation();
-        const t = prompt('Новое название чата:', title);
-        if (t === null) return;
-
-        try {
-            const res = await fetch(`/chat/${flowId}/${id}/rename`, {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({title: t})
-            });
-            if (!res.ok) {
-                const err = await res.text();
-                throw new Error('HTTP ' + res.status + ': ' + err);
-            }
-            const d = await res.json();
-            item.dataset.title = d.title;
-            item.querySelector('.title').textContent = d.title;
-        } catch (err) {
-            alert('Не удалось переименовать: ' + err.message);
-        }
+        startInlineEdit(item, id);
     });
 
     item.querySelector('.btn-delete').addEventListener('click', async (e) => {
         e.preventDefault();
         e.stopPropagation();
-        if (!confirm('Удалить чат «' + title + '»?')) return;
+        if (!confirm('Удалить чат «' + item.dataset.title + '»?')) return;
 
         try {
             const res = await fetch(`/chat/${flowId}/${id}/delete`, {method: 'POST'});
-            if (!res.ok) {
-                const err = await res.text();
-                throw new Error('HTTP ' + res.status + ': ' + err);
-            }
+            if (!res.ok) throw new Error('HTTP ' + res.status);
             window.location.href = `/chat/${flowId}`;
         } catch (err) {
             alert('Не удалось удалить: ' + err.message);
+        }
+    });
+});
+
+/* ---------- Инлайн-редактирование названия ---------- */
+
+let editingItem = null;   // какой чат сейчас редактируется
+
+function startInlineEdit(item, id) {
+    if (editingItem && editingItem !== item) {
+        cancelInlineEdit(editingItem);
+    }
+    if (item.classList.contains('editing')) return;
+
+    editingItem = item;
+    item.classList.add('editing');
+
+    const titleEl = item.querySelector('.title');
+    const currentTitle = item.dataset.title || titleEl.textContent.trim();
+
+    // Заменяем <div class="title"> на <input>
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'title-input';
+    input.value = currentTitle;
+    input.maxLength = 120;
+
+    titleEl.replaceWith(input);
+    input.focus();
+    input.select();
+
+    const save = async () => {
+        const newTitle = input.value.trim();
+        if (!newTitle) {
+            cancelInlineEdit(item);
+            return;
+        }
+        if (newTitle === currentTitle) {
+            cancelInlineEdit(item);
+            return;
+        }
+        try {
+            const res = await fetch(`/chat/${flowId}/${id}/rename`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({title: newTitle})
+            });
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            const d = await res.json();
+            finishInlineEdit(item, input, d.title);
+        } catch (err) {
+            alert('Не удалось переименовать: ' + err.message);
+            cancelInlineEdit(item);
+        }
+    };
+
+    input.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter') {
+            ev.preventDefault();
+            save();
+        } else if (ev.key === 'Escape') {
+            ev.preventDefault();
+            cancelInlineEdit(item);
+        }
+    });
+
+    input.addEventListener('blur', () => {
+        // Небольшая задержка, чтобы Enter успел сработать
+        setTimeout(() => {
+            if (item.classList.contains('editing')) save();
+        }, 100);
+    });
+
+    // Запоминаем input на элементе, чтобы cancel мог его найти
+    item._titleInput = input;
+    item._prevTitleEl = titleEl;
+}
+
+function finishInlineEdit(item, input, newTitle) {
+    item.dataset.title = newTitle;
+    const newTitleEl = document.createElement('div');
+    newTitleEl.className = 'title';
+    newTitleEl.textContent = newTitle;
+    input.replaceWith(newTitleEl);
+
+    item.classList.remove('editing');
+    item._titleInput = null;
+    item._prevTitleEl = null;
+    editingItem = null;
+}
+
+function cancelInlineEdit(item) {
+    if (!item.classList.contains('editing')) return;
+    const input = item._titleInput;
+    const prev = item._prevTitleEl;
+    if (input && prev) input.replaceWith(prev);
+    item.classList.remove('editing');
+    item._titleInput = null;
+    item._prevTitleEl = null;
+    editingItem = null;
+}
+
+function cancelInlineEdit(item) {
+    if (!item.classList.contains('editing')) return;
+    const input = item._titleInput;
+    const prev = item._prevTitleEl;
+    if (input && prev) input.replaceWith(prev);
+    item.classList.remove('editing');
+    item._titleInput = null;
+    item._prevTitleEl = null;
+    editingItem = null;
+}
+
+/* ---------- Клик по чату: одиночный → переход, двойной → редактирование ---------- */
+document.querySelectorAll('.chat-item .link').forEach(link => {
+    let clickTimer = null;
+
+    link.addEventListener('click', (e) => {
+        e.preventDefault();   // блокируем навигацию, решаем сами
+
+        if (clickTimer) {
+            // Второй клик за 250 мс → это двойной → редактор
+            clearTimeout(clickTimer);
+            clickTimer = null;
+            const item = link.closest('.chat-item');
+            startInlineEdit(item, item.dataset.id);
+        } else {
+            // Первый клик — ждём 250 мс, не придёт ли второй
+            clickTimer = setTimeout(() => {
+                clickTimer = null;
+                window.location.href = link.getAttribute('href');
+            }, 250);
         }
     });
 });
