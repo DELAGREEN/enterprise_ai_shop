@@ -1,6 +1,62 @@
 {% extends "base.html" %}
 {% block title %}Админка{% endblock %}
 {% block content %}
+<style>
+    main { max-width: 100% !important; padding: 24px 32px !important; }
+    .card { overflow-x: auto; }
+    .badge.custom { background: #ede9fe; color: #5b21b6; margin-left: 4px; }
+    .modal-backdrop {
+        position: fixed; inset: 0; background: rgba(0,0,0,.4);
+        display: flex; align-items: center; justify-content: center; z-index: 1000;
+    }
+    .modal {
+        background: #fff; padding: 20px; border-radius: 10px;
+        width: 520px; max-width: 92vw; box-shadow: 0 10px 30px rgba(0,0,0,.2);
+    }
+    .modal h3 { margin-top: 0; }
+    .field { margin-bottom: 14px; }
+    .label-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 4px;
+    }
+    .btn-field-reset {
+        background: #f3f4f6;
+        color: #374151;
+        border: 1px solid #d1d5db;
+        border-radius: 6px;
+        padding: 2px 8px;
+        font-size: .8rem;
+        cursor: pointer;
+        line-height: 1.3;
+    }
+    .btn-field-reset:hover:not(:disabled) { background: #e5e7eb; }
+    .btn-field-reset:disabled {
+        opacity: .4;
+        cursor: not-allowed;
+    }
+    .modal input[type=text],
+    .modal textarea {
+        width: 100%;
+        padding: 8px;
+        border: 1px solid #d1d5db;
+        border-radius: 6px;
+        font-family: inherit;
+        font-size: .95rem;
+    }
+    .modal textarea { resize: vertical; min-height: 90px; }
+    .modal-actions {
+        display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px;
+    }
+    .row-actions {
+    display: flex;
+    flex-wrap: wrap;      /* на узких экранах кнопки перейдут на новую строку */
+    gap: 8px;             /* и горизонтальный, и вертикальный зазор */
+    align-items: center;
+    }
+</style>
+
 <h1>Управление агентами</h1>
 <div class="card">
     <table>
@@ -10,7 +66,7 @@
                 <th>Название</th>
                 <th>Описание</th>
                 <th>Статус</th>
-                <th style="width: 320px;">Действия</th>
+                <th style="width: 240px;">Действия</th>
             </tr>
         </thead>
         <tbody>
@@ -37,6 +93,7 @@
                     {% endif %}
                 </td>
                 <td>
+                <div class="row-actions">
                     <button onclick="togglePublish('{{ f.id }}', {{ 'true' if not f.is_published else 'false' }})">
                         {{ 'Опубликовать' if not f.is_published else 'Снять' }}
                     </button>
@@ -46,12 +103,8 @@
                             data-desc="{{ f.description }}"
                             data-lf-name="{{ f.langflow_name }}"
                             data-lf-desc="{{ f.langflow_description }}">✎ Изменить</button>
-                    <button class="danger btn-reset"
-                            data-id="{{ f.id }}"
-                            {% if not f.name_overridden and not f.description_overridden %}disabled{% endif %}>
-                        ↺ Сбросить
-                    </button>
-                </td>
+                </div>
+            </td>
             </tr>
         {% endfor %}
         {% if not flows %}
@@ -64,39 +117,46 @@
 <!-- Модалка редактирования -->
 <div id="editModal" class="modal-backdrop" style="display:none;">
     <div class="modal">
-        <h3 style="margin-top:0;">Редактировать агента</h3>
-        <label>Название
-            <input type="text" id="editName">
-        </label>
-        <label style="display:block; margin-top:10px;">Описание
-            <textarea id="editDesc" rows="4"
-                      style="width:100%; padding:8px; border:1px solid #d1d5db; border-radius:6px; font-family: inherit;"></textarea>
-        </label>
-        <p class="muted" style="font-size:.8rem; margin-top:6px;">
-            Оставьте поле пустым, чтобы использовать значение из Langflow.
+        <h3>Редактировать агента</h3>
+
+        <div class="field">
+            <div class="label-row">
+                <label for="editName">Название</label>
+                <button type="button"
+                        class="btn-field-reset"
+                        id="resetNameBtn"
+                        title="Сбросить к значению из Langflow">↺ Сбросить</button>
+            </div>
+            <input type="text" id="editName" maxlength="200">
+        </div>
+
+        <div class="field">
+            <div class="label-row">
+                <label for="editDesc">Описание</label>
+                <button type="button"
+                        class="btn-field-reset"
+                        id="resetDescBtn"
+                        title="Сбросить к значению из Langflow">↺ Сбросить</button>
+            </div>
+            <textarea id="editDesc" rows="4"></textarea>
+        </div>
+
+        <p class="muted" style="font-size:.82rem; margin-top:6px;">
+            Если значение совпадает с Langflow или поле пустое — при сохранении
+            override будет снят, и агент вернётся к оригиналу из Langflow.
         </p>
-        <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:14px;">
-            <button class="secondary" id="editCancel">Отмена</button>
-            <button id="editSave">Сохранить</button>
+
+        <div class="modal-actions">
+            <button type="button" class="secondary" id="editCancel">Отмена</button>
+            <button type="button" id="editSave">Сохранить</button>
         </div>
     </div>
 </div>
-
-<style>
-    .badge.custom { background: #ede9fe; color: #5b21b6; margin-left: 4px; }
-    .modal-backdrop {
-        position: fixed; inset: 0; background: rgba(0,0,0,.4);
-        display: flex; align-items: center; justify-content: center; z-index: 1000;
-    }
-    .modal {
-        background: #fff; padding: 20px; border-radius: 10px;
-        width: 480px; max-width: 92vw; box-shadow: 0 10px 30px rgba(0,0,0,.2);
-    }
-    .modal input, .modal textarea { width: 100%; }
-</style>
 {% endblock %}
+
 {% block scripts %}
 <script>
+/* ---------- Публикация / снятие ---------- */
 async function togglePublish(flowId, publish) {
     try {
         const res = await fetch('/admin/publish', {
@@ -109,57 +169,96 @@ async function togglePublish(flowId, publish) {
     } catch (e) { alert('Ошибка сети: ' + e.message); }
 }
 
-const modal = document.getElementById('editModal');
-const nameInput = document.getElementById('editName');
-const descInput = document.getElementById('editDesc');
-let editingId = null;
+/* ---------- Модалка ---------- */
+const modal      = document.getElementById('editModal');
+const nameInput  = document.getElementById('editName');
+const descInput  = document.getElementById('editDesc');
+const resetName  = document.getElementById('resetNameBtn');
+const resetDesc  = document.getElementById('resetDescBtn');
 
+let editingId    = null;
+let lfName       = '';   // оригинальные значения из Langflow
+let lfDesc       = '';
+
+/* Обновляем состояние кнопок сброса:
+   активна только если текущее значение в поле отличается от Langflow. */
+function refreshResetButtons() {
+    resetName.disabled = nameInput.value.trim() === (lfName || '').trim();
+    resetDesc.disabled = descInput.value.trim() === (lfDesc || '').trim();
+}
+
+nameInput.addEventListener('input', refreshResetButtons);
+descInput.addEventListener('input', refreshResetButtons);
+
+resetName.addEventListener('click', () => {
+    nameInput.value = lfName || '';
+    refreshResetButtons();
+    nameInput.focus();
+});
+
+resetDesc.addEventListener('click', () => {
+    descInput.value = lfDesc || '';
+    refreshResetButtons();
+    descInput.focus();
+});
+
+/* ---------- Открытие модалки ---------- */
 document.querySelectorAll('.btn-edit').forEach(btn => {
     btn.addEventListener('click', () => {
         editingId = btn.dataset.id;
+        lfName    = btn.dataset.lfName || '';
+        lfDesc    = btn.dataset.lfDesc || '';
+
         nameInput.value = btn.dataset.name || '';
         descInput.value = btn.dataset.desc || '';
+
+        refreshResetButtons();
+
         modal.style.display = 'flex';
         nameInput.focus();
     });
 });
 
-document.getElementById('editCancel').addEventListener('click', () => {
+/* ---------- Отмена / закрытие ---------- */
+function closeModal() {
     modal.style.display = 'none';
     editingId = null;
+}
+document.getElementById('editCancel').addEventListener('click', closeModal);
+modal.addEventListener('click', (e) => {
+    if (e.target === modal) closeModal();
+});
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && modal.style.display === 'flex') closeModal();
 });
 
+/* ---------- Сохранение ---------- */
 document.getElementById('editSave').addEventListener('click', async () => {
     if (!editingId) return;
+
+    const rawName = nameInput.value;
+    const rawDesc = descInput.value;
+
+    // Если введённое совпадает со значением Langflow → отправляем пустую строку,
+    // чтобы бэкенд снял override.
+    const nameToSend = rawName.trim() === (lfName || '').trim() ? '' : rawName;
+    const descToSend = rawDesc.trim() === (lfDesc || '').trim() ? '' : rawDesc;
+
     try {
         const res = await fetch('/admin/flow/edit', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({
                 flow_id: editingId,
-                name: nameInput.value,
-                description: descInput.value
+                name: nameToSend,
+                description: descToSend
             })
         });
         if (res.ok) location.reload();
         else alert('Ошибка: ' + res.status);
-    } catch (e) { alert('Ошибка сети: ' + e.message); }
-});
-
-document.querySelectorAll('.btn-reset').forEach(btn => {
-    btn.addEventListener('click', async () => {
-        const id = btn.dataset.id;
-        if (!confirm('Сбросить название и описание к версии из Langflow?')) return;
-        try {
-            const res = await fetch('/admin/flow/reset', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({flow_id: id})
-            });
-            if (res.ok) location.reload();
-            else alert('Ошибка: ' + res.status);
-        } catch (e) { alert('Ошибка сети: ' + e.message); }
-    });
+    } catch (e) {
+        alert('Ошибка сети: ' + e.message);
+    }
 });
 </script>
 {% endblock %}
