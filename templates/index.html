@@ -10,6 +10,11 @@
             <div style="font-size: 2rem;">{{ a.icon }}</div>
             <h3 style="margin: 8px 0;">{{ a.name }}</h3>
             <p class="muted" style="margin: 0;">{{ a.description or 'Без описания' }}</p>
+            {% if a.chat_count %}
+            <div style="margin-top: 8px; font-size: .8rem; color: #6b7280;">
+                💬 {{ a.chat_count }} {{ 'чат' if a.chat_count == 1 else 'чата' }}
+            </div>
+            {% endif %}
         </div>
     </a>
     {% endfor %}

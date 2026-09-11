@@ -3,38 +3,204 @@
 {% block head %}
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <style>
-    .chat-wrap { display: flex; flex-direction: column; height: calc(100vh - 200px); }
-    .messages { flex: 1; overflow-y: auto; padding: 12px; background: #fff; border-radius: 10px 10px 0 0; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
-    .msg { margin-bottom: 14px; padding: 10px 14px; border-radius: 10px; max-width: 85%; white-space: normal; word-wrap: break-word; line-height: 1.5; }
+    .chat-layout {
+        display: grid;
+        grid-template-columns: 300px 1fr;
+        gap: 16px;
+        height: calc(100vh - 160px);
+        min-height: 480px;
+    }
+    /* Sidebar */
+    .sidebar {
+        background: #fff;
+        border-radius: 10px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+    }
+    .sidebar-header {
+        padding: 12px;
+        border-bottom: 1px solid #e5e7eb;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    .sidebar-header h3 { margin: 0; font-size: 1rem; }
+    .chats-list { flex: 1; overflow-y: auto; padding: 6px; }
+    .chat-item {
+        padding: 10px;
+        border-radius: 8px;
+        cursor: pointer;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        margin-bottom: 4px;
+        transition: background .15s;
+        position: relative;
+    }
+    .chat-item:hover { background: #f3f4f6; }
+    .chat-item.active { background: #dbeafe; }
+    .chat-item .title {
+        font-weight: 600;
+        font-size: .9rem;
+        word-break: break-word;
+        color: #111827;
+        text-decoration: none;
+    }
+    .chat-item .date {
+        font-size: .72rem;
+        color: #6b7280;
+        margin-top: 2px;
+    }
+    .chat-item .link {
+        display: block;
+        text-decoration: none;
+        color: inherit;
+        flex: 1;
+        min-width: 0;
+    }
+    .chat-item .actions {
+        display: none;
+        gap: 4px;
+        position: absolute;
+        top: 6px;
+        right: 6px;
+    }
+    .chat-item:hover .actions { display: flex; }
+    .chat-item .actions button {
+        padding: 2px 6px;
+        font-size: .75rem;
+        line-height: 1;
+    }
+    /* Main chat */
+    .chat-main {
+        display: flex;
+        flex-direction: column;
+        background: #fff;
+        border-radius: 10px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+        overflow: hidden;
+    }
+    .chat-header {
+        padding: 12px 16px;
+        border-bottom: 1px solid #e5e7eb;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+    }
+    .chat-header h2 { margin: 0; font-size: 1.1rem; }
+    .toolbar { display: flex; gap: 8px; }
+    .messages { flex: 1; overflow-y: auto; padding: 16px; }
+    .msg {
+        margin-bottom: 14px;
+        padding: 10px 14px;
+        border-radius: 10px;
+        max-width: 85%;
+        word-wrap: break-word;
+        line-height: 1.5;
+        white-space: normal;
+    }
     .msg.user { background: #dbeafe; margin-left: auto; }
     .msg.bot { background: #f3f4f6; }
-    .msg pre { background: #111827; color: #f9fafb; padding: 10px; border-radius: 6px; overflow-x: auto; }
-    .msg code { background: #e5e7eb; padding: 2px 5px; border-radius: 4px; font-size: .9em; }
+    .msg pre {
+        background: #111827;
+        color: #f9fafb;
+        padding: 10px;
+        border-radius: 6px;
+        overflow-x: auto;
+    }
+    .msg code {
+        background: #e5e7eb;
+        padding: 2px 5px;
+        border-radius: 4px;
+        font-size: .9em;
+    }
     .msg pre code { background: transparent; padding: 0; }
-    .thinking { background: #fff7ed; border-left: 3px solid #f59e0b; padding: 10px 14px; margin-bottom: 10px; font-size: 0.9rem; color: #78350f; display: none; border-radius: 6px; }
-    .thinking.visible { display: block; }
-    .input-row { display: flex; gap: 8px; padding: 12px; background: #fff; border-radius: 0 0 10px 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); border-top: 1px solid #e5e7eb; }
+    .thinking {
+        background: #fff7ed;
+        border-left: 3px solid #f59e0b;
+        padding: 10px 14px;
+        margin-bottom: 10px;
+        font-size: .9rem;
+        color: #78350f;
+        border-radius: 6px;
+    }
+    .thinking.hidden { display: none; }
+    .input-row {
+        display: flex;
+        gap: 8px;
+        padding: 12px;
+        border-top: 1px solid #e5e7eb;
+    }
     .input-row input[type=text] { flex: 1; }
-    .toolbar { display: flex; gap: 8px; margin-bottom: 10px; }
+    .empty-hint { color: #6b7280; font-size: .9rem; padding: 8px; }
 </style>
 {% endblock %}
 {% block content %}
-<h1>{{ name }}</h1>
-<div class="toolbar">
-    <button class="secondary" id="deepthinkBtn">🧠 DeepThink</button>
-    <button class="secondary" id="searchBtn">🔍 Search</button>
-</div>
-<div class="chat-wrap">
-    <div class="messages" id="messages"></div>
-    <form class="input-row" id="chatForm" autocomplete="off">
-        <input type="text" id="msgInput" placeholder="Напишите сообщение..." required>
-        <button type="submit">Отправить</button>
-    </form>
+<div class="chat-layout">
+    <aside class="sidebar">
+        <div class="sidebar-header">
+            <h3>Мои чаты</h3>
+            <form method="post" action="/chat/{{ flow_id }}/new" style="margin: 0;">
+                <button type="submit" title="Новый чат">+ Новый</button>
+            </form>
+        </div>
+        <div class="chats-list">
+            {% if not chats %}
+                <div class="empty-hint">Чатов ещё нет</div>
+            {% endif %}
+            {% for c in chats %}
+            <div class="chat-item {% if c.id == chat.id %}active{% endif %}"
+                 data-id="{{ c.id }}"
+                 data-title="{{ c.title }}">
+                <a class="link" href="/chat/{{ flow_id }}/{{ c.id }}">
+                    <div class="title">{{ c.title }}</div>
+                    <div class="date">{{ c.created_at.strftime('%d.%m.%Y %H:%M') }}</div>
+                </a>
+                <div class="actions">
+                    <button class="secondary btn-rename" title="Переименовать">✎</button>
+                    <button class="danger btn-delete" title="Удалить">🗑</button>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </aside>
+
+    <section class="chat-main">
+        <div class="chat-header">
+            <h2>{{ name }}</h2>
+            <div class="toolbar">
+                <button class="secondary" id="deepthinkBtn" title="Показать/скрыть мышление">🧠 DeepThink</button>
+                <button class="secondary" id="searchBtn">🔍 Search</button>
+            </div>
+        </div>
+        <div class="messages" id="messages">
+            {% for m in messages %}
+            <div class="msg {{ 'user' if m.role == 'user' else 'bot' }}">
+                {% if m.thinking %}
+                <div class="thinking">
+                    <strong>🧠 Мышление модели:</strong><br>
+                    <span class="thinking-body" data-raw="{{ m.thinking }}"></span>
+                </div>
+                {% endif %}
+                <div class="content" data-raw="{{ m.content }}"></div>
+            </div>
+            {% endfor %}
+        </div>
+        <form class="input-row" id="chatForm" autocomplete="off">
+            <input type="text" id="msgInput" placeholder="Напишите сообщение..." required>
+            <button type="submit">Отправить</button>
+        </form>
+    </section>
 </div>
 {% endblock %}
 {% block scripts %}
 <script>
-const flowId = "{{ flow_id }}";
+const flowId = {{ flow_id|tojson }};
+const chatId = {{ chat.id|tojson }};
+
 const messagesEl = document.getElementById('messages');
 const form = document.getElementById('chatForm');
 const input = document.getElementById('msgInput');
@@ -43,46 +209,62 @@ const searchBtn = document.getElementById('searchBtn');
 
 let showThinking = true;
 
+/* ---- Рендер уже сохранённой истории ---- */
+function renderMarkdownInto(el, raw) {
+    el.innerHTML = raw ? marked.parse(raw) : '';
+}
+document.querySelectorAll('.msg .content').forEach(el => {
+    renderMarkdownInto(el, el.getAttribute('data-raw') || '');
+});
+document.querySelectorAll('.msg .thinking-body').forEach(el => {
+    renderMarkdownInto(el, el.getAttribute('data-raw') || '');
+});
+
+/* ---- DeepThink / Search ---- */
 deepthinkBtn.addEventListener('click', () => {
     showThinking = !showThinking;
     document.querySelectorAll('.thinking').forEach(el => {
-        el.classList.toggle('visible', showThinking);
+        el.classList.toggle('hidden', !showThinking);
     });
     deepthinkBtn.style.opacity = showThinking ? '1' : '0.5';
 });
+searchBtn.addEventListener('click', () => alert('Функция поиска пока не реализована'));
 
-searchBtn.addEventListener('click', () => {
-    alert('Функция поиска пока не реализована');
-});
-
+/* ---- Утилиты ---- */
 function escapeHtml(s) {
     return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
-
-function addUserMessage(text) {
-    const div = document.createElement('div');
-    div.className = 'msg user';
-    div.textContent = text;
-    messagesEl.appendChild(div);
+function scrollBottom() {
     messagesEl.scrollTop = messagesEl.scrollHeight;
 }
+function appendUserMessage(text) {
+    const div = document.createElement('div');
+    div.className = 'msg user';
+    const c = document.createElement('div');
+    c.className = 'content';
+    c.textContent = text;
+    div.appendChild(c);
+    messagesEl.appendChild(div);
+    scrollBottom();
+}
 
+/* ---- Отправка ---- */
 form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const text = input.value.trim();
     if (!text) return;
 
-    addUserMessage(text);
+    appendUserMessage(text);
     input.value = '';
 
     const botDiv = document.createElement('div');
     botDiv.className = 'msg bot';
     botDiv.innerHTML = '<em>…</em>';
     messagesEl.appendChild(botDiv);
-    messagesEl.scrollTop = messagesEl.scrollHeight;
+    scrollBottom();
 
     try {
-        const res = await fetch(`/chat/${flowId}/send`, {
+        const res = await fetch(`/chat/${flowId}/${chatId}/send`, {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({message: text})
@@ -92,24 +274,79 @@ form.addEventListener('submit', async (e) => {
             throw new Error('HTTP ' + res.status + ': ' + errText);
         }
         const data = await res.json();
-        botDiv.innerHTML = '';
 
+        botDiv.innerHTML = '';
         if (data.thinking) {
             const t = document.createElement('div');
-            t.className = 'thinking' + (showThinking ? ' visible' : '');
+            t.className = 'thinking' + (showThinking ? '' : ' hidden');
             t.innerHTML = '<strong>🧠 Мышление модели:</strong><br>' + marked.parse(data.thinking);
             botDiv.appendChild(t);
         }
-
         const content = document.createElement('div');
+        content.className = 'content';
         content.innerHTML = marked.parse(data.text || '');
         botDiv.appendChild(content);
+
+        // Если чат был "Новый чат" — обновляем название в сайдбаре без перезагрузки
+        const activeItem = document.querySelector('.chat-item.active');
+        if (activeItem && activeItem.dataset.title === 'Новый чат' && data.title) {
+            activeItem.dataset.title = data.title;
+            activeItem.querySelector('.title').textContent = data.title;
+        }
     } catch (err) {
         botDiv.innerHTML = '<span style="color:#dc2626;">Ошибка: ' + escapeHtml(err.message) + '</span>';
     }
-    messagesEl.scrollTop = messagesEl.scrollHeight;
+    scrollBottom();
+});
+
+/* ---- Переименование / удаление чата ---- */
+document.querySelectorAll('.chat-item').forEach(item => {
+    const id = item.dataset.id;
+    const title = item.dataset.title;
+
+    item.querySelector('.btn-rename').addEventListener('click', async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const t = prompt('Новое название чата:', title);
+        if (t === null) return;
+
+        try {
+            const res = await fetch(`/chat/${flowId}/${id}/rename`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({title: t})
+            });
+            if (!res.ok) {
+                const err = await res.text();
+                throw new Error('HTTP ' + res.status + ': ' + err);
+            }
+            const d = await res.json();
+            item.dataset.title = d.title;
+            item.querySelector('.title').textContent = d.title;
+        } catch (err) {
+            alert('Не удалось переименовать: ' + err.message);
+        }
+    });
+
+    item.querySelector('.btn-delete').addEventListener('click', async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!confirm('Удалить чат «' + title + '»?')) return;
+
+        try {
+            const res = await fetch(`/chat/${flowId}/${id}/delete`, {method: 'POST'});
+            if (!res.ok) {
+                const err = await res.text();
+                throw new Error('HTTP ' + res.status + ': ' + err);
+            }
+            window.location.href = `/chat/${flowId}`;
+        } catch (err) {
+            alert('Не удалось удалить: ' + err.message);
+        }
+    });
 });
 
 input.focus();
+scrollBottom();
 </script>
 {% endblock %}
