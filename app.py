@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse
+from sqlalchemy import text
 
 from database import Base, engine
 from session import get_current_user
@@ -15,10 +16,21 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+MIGRATIONS = [
+    "ALTER TABLE flow_publications ADD COLUMN IF NOT EXISTS override_name VARCHAR(200)",
+    "ALTER TABLE flow_publications ADD COLUMN IF NOT EXISTS override_description TEXT",
+]
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        for stmt in MIGRATIONS:
+            try:
+                await conn.execute(text(stmt))
+            except Exception as e:
+                logger.warning("Миграция пропущена (%s): %s", stmt, e)
     logger.info("Схема БД инициализирована")
     yield
     await engine.dispose()
@@ -27,23 +39,19 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Langflow Agent Manager", lifespan=lifespan)
 
-
-# Пути, доступные без сессии
 PUBLIC_PATHS = {"/auth/login", "/auth/logout", "/favicon.ico"}
 
 
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
-
     if path in PUBLIC_PATHS or path.startswith("/static"):
         return await call_next(request)
 
     user = get_current_user(request)
     if not user:
         if request.method in ("GET", "HEAD"):
-            login_url = f"/auth/login?next={path}"
-            return RedirectResponse(url=login_url, status_code=302)
+            return RedirectResponse(url=f"/auth/login?next={path}", status_code=302)
         return JSONResponse({"detail": "Not authenticated"}, status_code=401)
 
     return await call_next(request)

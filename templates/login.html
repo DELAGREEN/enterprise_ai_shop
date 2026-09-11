@@ -1,22 +1,42 @@
 {% extends "base.html" %}
 {% block title %}Вход{% endblock %}
 {% block content %}
-<div class="card" style="max-width: 400px; margin: 60px auto;">
-    <h1>Вход в систему</h1>
-    {% if error %}<div class="error">{{ error }}</div>{% endif %}
-    <form method="post" action="/auth/login">
-        <input type="hidden" name="next" value="{{ next or '' }}">
-        <div style="margin-bottom: 12px;">
-            <label>Логин
-                <input type="text" name="username" required autofocus>
-            </label>
-        </div>
-        <div style="margin-bottom: 16px;">
-            <label>Пароль
-                <input type="password" name="password" required>
-            </label>
-        </div>
-        <button type="submit" style="width: 100%;">Войти</button>
-    </form>
+<div class="login-wrap">
+    <div class="card login-card">
+        <h1 style="margin-top:0; text-align:center;">Вход в систему</h1>
+        {% if error %}<div class="error">{{ error }}</div>{% endif %}
+        <form method="post" action="/auth/login">
+            <input type="hidden" name="next" value="{{ next or '' }}">
+            <div style="margin-bottom: 12px;">
+                <label>Логин
+                    <input type="text" name="username" required autofocus>
+                </label>
+            </div>
+            <div style="margin-bottom: 16px;">
+                <label>Пароль
+                    <input type="password" name="password" required>
+                </label>
+            </div>
+            <button type="submit" style="width: 100%;">Войти</button>
+        </form>
+    </div>
 </div>
+
+<style>
+    /* Наследуем <main>, растягиваем его на высоту экрана */
+    main {
+        min-height: calc(100vh - 60px); /* 60px = высота шапки */
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 16px;
+    }
+    .login-wrap {
+        width: 100%;
+        max-width: 420px;
+    }
+    .login-card {
+        padding: 28px;
+    }
+</style>
 {% endblock %}

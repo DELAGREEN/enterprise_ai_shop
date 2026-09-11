@@ -32,10 +32,9 @@
     {% block head %}{% endblock %}
 </head>
 <body>
-<header>
-    <div class="logo">🤖 Langflow Agents</div>
+<<header>
+    <a href="/" class="logo">🤖 Langflow Agents</a>
     <nav>
-        <a href="/">Главная</a>
         {% if user and user.is_admin %}
             <a href="/admin">Админка</a>
         {% endif %}

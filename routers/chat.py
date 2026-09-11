@@ -30,7 +30,16 @@ async def _is_published(db: AsyncSession, flow_id: str) -> bool:
     return result.scalar_one_or_none() is not None
 
 
-async def _flow_name(flow_id: str) -> str:
+async def _flow_name(flow_id: str, db: AsyncSession) -> str:
+    # 1. Сначала смотрим override
+    res = await db.execute(
+        select(FlowPublication).where(FlowPublication.flow_id == flow_id)
+    )
+    pub = res.scalar_one_or_none()
+    if pub and pub.override_name:
+        return pub.override_name
+
+    # 2. Иначе — из Langflow
     client = LangflowClient()
     flows = await client.get_all_flows()
     flow = next((f for f in flows if f.get("id") == flow_id), None)
@@ -135,7 +144,7 @@ async def chat_page(
         {
             "request": request,
             "flow_id": flow_id,
-            "name": await _flow_name(flow_id),
+            "name": await _flow_name(flow_id, db),
             "user": user,
             "chat": chat,
             "chats": chats,

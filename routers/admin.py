@@ -27,30 +27,52 @@ def _require_admin(request: Request) -> dict:
     return user
 
 
+async def _get_or_create_pub(db: AsyncSession, flow_id: str) -> FlowPublication:
+    res = await db.execute(
+        select(FlowPublication).where(FlowPublication.flow_id == flow_id)
+    )
+    row = res.scalar_one_or_none()
+    if row is None:
+        row = FlowPublication(flow_id=flow_id, is_published=False)
+        db.add(row)
+        await db.flush()
+    return row
+
+
 @router.get("", response_class=HTMLResponse)
 async def admin_page(request: Request, db: AsyncSession = Depends(get_db)):
     user = get_current_user(request)
     if not user:
         return RedirectResponse(url="/auth/login", status_code=302)
     if not user.get("is_admin"):
-        # Обычный пользователь → на главную
         return RedirectResponse(url="/", status_code=302)
 
     client = LangflowClient()
     flows = await client.get_all_flows()
 
-    result = await db.execute(select(FlowPublication))
-    pubs = {p.flow_id: p for p in result.scalars().all()}
+    res = await db.execute(select(FlowPublication))
+    pubs = {p.flow_id: p for p in res.scalars().all()}
 
     items = []
     for flow in flows:
         fid = flow.get("id")
         p = pubs.get(fid)
+
+        lf_name = flow.get("name") or "Без имени"
+        lf_desc = flow.get("description") or ""
+
+        eff_name = (p.override_name if p and p.override_name else lf_name)
+        eff_desc = (p.override_description if p and p.override_description else lf_desc)
+
         items.append(
             {
                 "id": fid,
-                "name": flow.get("name") or "Без имени",
-                "description": flow.get("description") or "",
+                "langflow_name": lf_name,
+                "langflow_description": lf_desc,
+                "name": eff_name,
+                "description": eff_desc,
+                "name_overridden": bool(p and p.override_name),
+                "description_overridden": bool(p and p.override_description),
                 "is_published": bool(p and p.is_published),
             }
         )
@@ -60,6 +82,8 @@ async def admin_page(request: Request, db: AsyncSession = Depends(get_db)):
         {"request": request, "flows": items, "user": user},
     )
 
+
+# ---------- publish / unpublish ----------
 
 class PublishPayload(BaseModel):
     flow_id: str
@@ -72,27 +96,14 @@ async def publish(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ):
-    user = _require_admin(request)  # 403 для не-админов
-
-    result = await db.execute(
-        select(FlowPublication).where(FlowPublication.flow_id == payload.flow_id)
-    )
-    row = result.scalar_one_or_none()
+    user = _require_admin(request)
+    row = await _get_or_create_pub(db, payload.flow_id)
     now = datetime.utcnow()
 
-    if row is None:
-        row = FlowPublication(
-            flow_id=payload.flow_id,
-            is_published=payload.publish,
-            published_at=now if payload.publish else None,
-            updated_at=now,
-        )
-        db.add(row)
-    else:
-        row.is_published = payload.publish
-        if payload.publish and not row.published_at:
-            row.published_at = now
-        row.updated_at = now
+    row.is_published = payload.publish
+    if payload.publish and not row.published_at:
+        row.published_at = now
+    row.updated_at = now
 
     await db.commit()
     logger.info(
@@ -101,4 +112,70 @@ async def publish(
         payload.flow_id,
         "published" if payload.publish else "unpublished",
     )
+    return {"status": "ok"}
+
+
+# ---------- edit name / description ----------
+
+class EditPayload(BaseModel):
+    flow_id: str
+    name: str | None = None          # None → не менять; "" → сбросить override
+    description: str | None = None   # None → не менять; "" → сбросить override
+
+
+@router.post("/flow/edit")
+async def flow_edit(
+    payload: EditPayload,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    user = _require_admin(request)
+    row = await _get_or_create_pub(db, payload.flow_id)
+
+    if payload.name is not None:
+        stripped = payload.name.strip()
+        row.override_name = stripped[:200] if stripped else None
+
+    if payload.description is not None:
+        stripped = payload.description.strip()
+        row.override_description = stripped or None
+
+    row.updated_at = datetime.utcnow()
+    await db.commit()
+
+    logger.info(
+        "Админ %s: flow %s отредактирован (name=%r, desc=%r)",
+        user.get("username"),
+        payload.flow_id,
+        row.override_name,
+        row.override_description,
+    )
+    return {
+        "status": "ok",
+        "override_name": row.override_name,
+        "override_description": row.override_description,
+    }
+
+
+# ---------- reset to Langflow ----------
+
+class ResetPayload(BaseModel):
+    flow_id: str
+
+
+@router.post("/flow/reset")
+async def flow_reset(
+    payload: ResetPayload,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    user = _require_admin(request)
+    row = await _get_or_create_pub(db, payload.flow_id)
+
+    row.override_name = None
+    row.override_description = None
+    row.updated_at = datetime.utcnow()
+    await db.commit()
+
+    logger.info("Админ %s: flow %s сброшен к версии Langflow", user.get("username"), payload.flow_id)
     return {"status": "ok"}

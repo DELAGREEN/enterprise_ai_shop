@@ -22,9 +22,8 @@ async def index(request: Request, db: AsyncSession = Depends(get_db)):
     pub_res = await db.execute(
         select(FlowPublication).where(FlowPublication.is_published.is_(True))
     )
-    published_ids = {p.flow_id for p in pub_res.scalars().all()}
+    pubs = {p.flow_id: p for p in pub_res.scalars().all()}
 
-    # Сколько чатов у пользователя по каждому flow
     cnt_res = await db.execute(
         select(Chat.flow_id, func.count(Chat.id))
         .where(Chat.user_id == user["username"])
@@ -35,16 +34,22 @@ async def index(request: Request, db: AsyncSession = Depends(get_db)):
     agents = []
     for flow in flows:
         fid = flow.get("id")
-        if fid and fid in published_ids:
-            agents.append(
-                {
-                    "id": fid,
-                    "name": flow.get("name") or "Без имени",
-                    "description": flow.get("description") or "",
-                    "icon": "🤖",
-                    "chat_count": chat_counts.get(fid, 0),
-                }
-            )
+        if not fid or fid not in pubs:
+            continue
+
+        p = pubs[fid]
+        name = p.override_name or flow.get("name") or "Без имени"
+        desc = p.override_description or flow.get("description") or ""
+
+        agents.append(
+            {
+                "id": fid,
+                "name": name,
+                "description": desc,
+                "icon": "🤖",
+                "chat_count": chat_counts.get(fid, 0),
+            }
+        )
 
     return templates.TemplateResponse(
         "index.html",

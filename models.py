@@ -21,6 +21,10 @@ class FlowPublication(Base):
     published_at = Column(DateTime, nullable=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+    # Переопределения (если NULL — берём значения из Langflow)
+    override_name = Column(String(200), nullable=True)
+    override_description = Column(Text, nullable=True)
+
 
 class Chat(Base):
     __tablename__ = "chats"
