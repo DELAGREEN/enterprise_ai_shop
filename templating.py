@@ -4,10 +4,9 @@ from datetime import datetime, timedelta, timezone
 from fastapi.responses import HTMLResponse
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-TEMPLATES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
+from config import LOCAL_TZ_OFFSET_HOURS
 
-# Сдвиг локальной таймзоны от UTC в часах. МСК = 3.
-LOCAL_TZ_OFFSET_HOURS = int(os.getenv("LOCAL_TZ_OFFSET_HOURS", "3"))
+TEMPLATES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
 
 
 def localtime(dt: datetime | None, fmt: str = "%d.%m.%Y %H:%M") -> str:
@@ -20,6 +19,17 @@ def localtime(dt: datetime | None, fmt: str = "%d.%m.%Y %H:%M") -> str:
     return local.strftime(fmt)
 
 
+def human_size(n: int | None) -> str:
+    if not n:
+        return "0 B"
+    n = float(n)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if n < 1024:
+            return f"{n:.1f} {unit}"
+        n /= 1024
+    return f"{n:.1f} PB"
+
+
 class Templates:
     def __init__(self, directory: str):
         self.env = Environment(
@@ -30,6 +40,7 @@ class Templates:
         )
         # 👇 вот эта строка обязательна
         self.env.filters["localtime"] = localtime
+        self.env.filters["human_size"] = human_size
 
     def TemplateResponse(
         self,

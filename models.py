@@ -53,3 +53,21 @@ class ChatMessage(Base):
     content = Column(Text, nullable=False)
     thinking = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class LLMRequestLog(Base):
+    """
+    Append-only журнал всех LLM-запросов всех пользователей.
+    НЕ удаляется при удалении чата. Доступен только администратору.
+    """
+    __tablename__ = "llm_request_log"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String, nullable=False, index=True)
+    flow_id = Column(String, nullable=False, index=True)
+    chat_id = Column(String, nullable=True)          # может быть NULL, если чат удалён
+    chat_title = Column(String, nullable=True)        # снапшот названия на момент запроса
+    question = Column(Text, nullable=False)
+    answer = Column(Text, nullable=True)
+    thinking = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)

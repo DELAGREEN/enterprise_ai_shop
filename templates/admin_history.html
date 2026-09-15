@@ -1,0 +1,166 @@
+{% extends "admin_base.html" %}
+{% block admin_title %}История чатов{% endblock %}
+{% block admin_header %}История чатов пользователей{% endblock %}
+
+{% block admin_content %}
+{# ---------- Статистика ---------- #}
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="label">Записей в журнале</div>
+        <div class="value">{{ stats.total_all }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="label">Период накопления</div>
+        <div class="value" style="font-size:.95rem;">
+            {% if stats.min_dt %}
+                {{ stats.min_dt | localtime('%d.%m.%Y') }} — {{ stats.max_dt | localtime('%d.%m.%Y') }}
+            {% else %}
+                —
+            {% endif %}
+        </div>
+    </div>
+    <div class="stat-card">
+        <div class="label">Журнал LLM (llm_request_log)</div>
+        <div class="value">{{ sizes.log | human_size }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="label">Сообщения чатов (chat_messages)</div>
+        <div class="value">{{ sizes.messages | human_size }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="label">Чаты (chats)</div>
+        <div class="value">{{ sizes.chats | human_size }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="label">Публикации (flow_publications)</div>
+        <div class="value">{{ sizes.publications | human_size }}</div>
+    </div>
+</div>
+
+{# ---------- Фильтры ---------- #}
+<form method="get" action="/admin/history" class="filter-bar">
+    <label>Пользователь
+        <select name="user">
+            <option value="">— все —</option>
+            {% for u in users %}
+                <option value="{{ u }}" {% if filters.user == u %}selected{% endif %}>{{ u }}</option>
+            {% endfor %}
+        </select>
+    </label>
+    <label>Flow ID
+        <select name="flow">
+            <option value="">— все —</option>
+            {% for f in flow_ids %}
+                <option value="{{ f }}" {% if filters.flow == f %}selected{% endif %}>{{ f }}</option>
+            {% endfor %}
+        </select>
+    </label>
+    <label>С даты
+        <input type="date" name="from" value="{{ filters.from }}">
+    </label>
+    <label>По дату
+        <input type="date" name="to" value="{{ filters.to }}">
+    </label>
+    <label>Сортировка
+        <select name="sort">
+            <option value="desc" {% if filters.sort == 'desc' %}selected{% endif %}>Сначала новые</option>
+            <option value="asc"  {% if filters.sort == 'asc'  %}selected{% endif %}>Сначала старые</option>
+        </select>
+    </label>
+    <label>На странице
+        <select name="per_page">
+            {% for n in [25, 50, 100, 200] %}
+                <option value="{{ n }}" {% if per_page == n %}selected{% endif %}>{{ n }}</option>
+            {% endfor %}
+        </select>
+    </label>
+        <div class="filter-actions">
+        <button type="submit">Применить</button>
+        <a href="/admin/history" class="btn-reset-link">
+            <button type="button" class="secondary">Сбросить</button>
+        </a>
+    </div>
+
+</form>
+
+<p class="muted" style="margin: 0 0 10px;">
+    Найдено записей: <b>{{ total }}</b>
+    {% if total %} · страница {{ page }} из {{ pages }}{% endif %}
+    · даты в фильтре — в локальной таймзоне
+</p>
+
+{# ---------- Список ---------- #}
+<div class="card">
+    {% if not rows %}
+        <div class="empty-hint">Нет записей по заданным фильтрам</div>
+    {% else %}
+        {% for r in rows %}
+            <div class="log-row">
+                <div class="log-head">
+                    <span>👤 <b>{{ r.user_id }}</b></span>
+                    <span>🤖 flow <code>{{ r.flow_id[:8] }}…</code></span>
+                    {% if r.chat_title %}
+                        <span>💬 <b>{{ r.chat_title }}</b></span>
+                    {% endif %}
+                    <span>🕒 {{ r.created_at | localtime }}</span>
+                    <span class="muted">#{{ r.id }}</span>
+                </div>
+                <div class="log-pair">
+                    <div class="log-q"><b>Вопрос:</b><br>{{ r.question }}</div>
+                    {% if r.thinking %}
+                        <div class="log-think"><b>🧠 Мышление:</b><br>{{ r.thinking }}</div>
+                    {% endif %}
+                    <div class="log-a"><b>Ответ:</b><br>{{ r.answer or '—' }}</div>
+                </div>
+            </div>
+        {% endfor %}
+    {% endif %}
+</div>
+
+{# ---------- Пагинация ---------- #}
+{% if pages > 1 %}
+{% macro page_url(p) -%}
+/admin/history?page={{ p }}&per_page={{ per_page }}
+{%- if filters.user %}&user={{ filters.user }}{% endif %}
+{%- if filters.flow %}&flow={{ filters.flow }}{% endif %}
+{%- if filters.from %}&from={{ filters.from }}{% endif %}
+{%- if filters.to %}&to={{ filters.to }}{% endif %}
+{%- if filters.sort %}&sort={{ filters.sort }}{% endif %}
+{%- endmacro %}
+
+<div class="pagination">
+    {% if page > 1 %}
+        <a href="{{ page_url(page - 1) }}">← Назад</a>
+    {% else %}
+        <span class="disabled">← Назад</span>
+    {% endif %}
+
+    {% set start = [1, page - 2] | max %}
+    {% set end = [pages, page + 2] | min %}
+
+    {% if start > 1 %}
+        <a href="{{ page_url(1) }}">1</a>
+        {% if start > 2 %}<span>…</span>{% endif %}
+    {% endif %}
+
+    {% for p in range(start, end + 1) %}
+        {% if p == page %}
+            <span class="current">{{ p }}</span>
+        {% else %}
+            <a href="{{ page_url(p) }}">{{ p }}</a>
+        {% endif %}
+    {% endfor %}
+
+    {% if end < pages %}
+        {% if end < pages - 1 %}<span>…</span>{% endif %}
+        <a href="{{ page_url(pages) }}">{{ pages }}</a>
+    {% endif %}
+
+    {% if page < pages %}
+        <a href="{{ page_url(page + 1) }}">Вперёд →</a>
+    {% else %}
+        <span class="disabled">Вперёд →</span>
+    {% endif %}
+</div>
+{% endif %}
+{% endblock %}

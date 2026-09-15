@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+{% block title %}Админка — {% block admin_title %}Langflow{% endblock %}{% endblock %}
+{% block content %}
+<style>
+    main { max-width: 100% !important; padding: 24px 32px !important; }
+
+    .admin-tabs {
+        display: flex;
+        gap: 4px;
+        border-bottom: 2px solid #e5e7eb;
+        margin-bottom: 20px;
+    }
+    .admin-tabs a {
+        padding: 10px 18px;
+        text-decoration: none;
+        color: #4b5563;
+        font-weight: 500;
+        border-bottom: 2px solid transparent;
+        margin-bottom: -2px;
+        transition: color .15s, border-color .15s;
+    }
+    .admin-tabs a:hover { color: #111827; }
+    .admin-tabs a.active {
+        color: #2563eb;
+        border-bottom-color: #2563eb;
+    }
+
+    .card { overflow-x: auto; }
+
+    /* для страницы публикаций */
+    .badge.custom { background: #ede9fe; color: #5b21b6; margin-left: 4px; }
+    .row-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+
+    /* модалка */
+    .modal-backdrop {
+        position: fixed; inset: 0; background: rgba(0,0,0,.4);
+        display: flex; align-items: center; justify-content: center; z-index: 1000;
+    }
+    .modal {
+        background: #fff; padding: 20px; border-radius: 10px;
+        width: 520px; max-width: 92vw; box-shadow: 0 10px 30px rgba(0,0,0,.2);
+    }
+    .modal h3 { margin-top: 0; }
+    .field { margin-bottom: 14px; }
+    .label-row {
+        display: flex; justify-content: space-between; align-items: center;
+        margin-bottom: 4px;
+    }
+    .btn-field-reset {
+        background: #f3f4f6; color: #374151;
+        border: 1px solid #d1d5db; border-radius: 6px;
+        padding: 2px 8px; font-size: .8rem;
+        cursor: pointer; line-height: 1.3;
+    }
+    .btn-field-reset:hover:not(:disabled) { background: #e5e7eb; }
+    .btn-field-reset:disabled { opacity: .4; cursor: not-allowed; }
+
+    .modal input[type=text], .modal textarea {
+        width: 100%; padding: 8px;
+        border: 1px solid #d1d5db; border-radius: 6px;
+        font-family: inherit; font-size: .95rem;
+    }
+    .modal textarea { resize: vertical; min-height: 90px; }
+    .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+
+    /* для страницы истории */
+    .filter-bar {
+        display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end;
+        margin-bottom: 16px;
+        background: #fff; padding: 14px 16px; border-radius: 10px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    }
+    .filter-bar label { display: flex; flex-direction: column; font-size: .82rem; color: #4b5563; }
+    .filter-bar input, .filter-bar select {
+        padding: 6px 10px; border: 1px solid #d1d5db;
+        border-radius: 6px; font-size: .9rem; margin-top: 3px;
+    }
+    .filter-bar button { height: 34px; }
+    .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 12px; margin-bottom: 16px;
+    }
+    .stat-card {
+        background: #fff; padding: 14px 16px; border-radius: 10px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    }
+    .stat-card .label { font-size: .78rem; color: #6b7280; text-transform: uppercase; letter-spacing: .5px; }
+    .stat-card .value { font-size: 1.15rem; font-weight: 600; margin-top: 4px; color: #111827; }
+
+    .log-row { border-bottom: 1px solid #e5e7eb; padding: 14px 0; }
+    .log-row:last-child { border-bottom: none; }
+    .log-head {
+        display: flex; gap: 14px; flex-wrap: wrap;
+        font-size: .82rem; color: #6b7280; margin-bottom: 8px;
+    }
+    .log-head b { color: #111827; font-weight: 600; }
+    .log-pair { display: grid; grid-template-columns: 1fr; gap: 8px; }
+    .log-q, .log-a {
+        padding: 10px 12px; border-radius: 8px; font-size: .92rem;
+        white-space: pre-wrap; word-wrap: break-word;
+    }
+    .log-q { background: #dbeafe; }
+    .log-a { background: #f3f4f6; }
+    .log-think {
+        background: #fff7ed; border-left: 3px solid #f59e0b;
+        padding: 8px 12px; margin-top: 6px; font-size: .85rem; color: #78350f;
+        border-radius: 6px; white-space: pre-wrap;
+    }
+
+    .pagination {
+        display: flex; gap: 6px; justify-content: center; align-items: center;
+        margin-top: 18px; flex-wrap: wrap;
+    }
+    .pagination a, .pagination span {
+        padding: 6px 12px; border-radius: 6px; text-decoration: none;
+        background: #fff; color: #374151; border: 1px solid #d1d5db;
+        font-size: .88rem;
+    }
+    .pagination .current { background: #2563eb; color: #fff; border-color: #2563eb; }
+    .pagination .disabled { opacity: .4; pointer-events: none; }
+    .empty-hint { color: #6b7280; padding: 24px; text-align: center; }
+
+    /* для страницы настроек */
+    .kv-table { width: 100%; border-collapse: collapse; }
+    .kv-table th, .kv-table td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #e5e7eb; }
+    .kv-table th { width: 280px; color: #4b5563; font-weight: 500; }
+    .kv-table code { background: #f3f4f6; padding: 2px 6px; border-radius: 4px; font-size: .9em; }
+</style>
+
+<h1>{% block admin_header %}Админка{% endblock %}</h1>
+
+<nav class="admin-tabs">
+    <a href="/admin/publications" class="{% if active_menu == 'publications' %}active{% endif %}">📦 Публикации</a>
+    <a href="/admin/history" class="{% if active_menu == 'history' %}active{% endif %}">💬 История чатов</a>
+    <a href="/admin/settings" class="{% if active_menu == 'settings' %}active{% endif %}">⚙️ Настройки</a>
+</nav>
+
+{% block admin_content %}{% endblock %}
+{% endblock %}

@@ -1,0 +1,182 @@
+{% extends "admin_base.html" %}
+{% block admin_title %}Публикации{% endblock %}
+{% block admin_header %}Управление агентами{% endblock %}
+
+{% block admin_content %}
+<div class="card">
+    <table>
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Название</th>
+                <th>Описание</th>
+                <th>Статус</th>
+                <th style="width: 240px;">Действия</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for f in flows %}
+            <tr data-flow-id="{{ f.id }}">
+                <td><code>{{ f.id }}</code></td>
+                <td>
+                    <span class="cell-name">{{ f.name }}</span>
+                    {% if f.name_overridden %}
+                        <span class="badge custom" title="Переопределено вручную">✎</span>
+                    {% endif %}
+                </td>
+                <td class="muted">
+                    <span class="cell-desc">{{ f.description or '—' }}</span>
+                    {% if f.description_overridden %}
+                        <span class="badge custom" title="Переопределено вручную">✎</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if f.is_published %}
+                        <span class="badge ok">Опубликован</span>
+                    {% else %}
+                        <span class="badge no">Нет</span>
+                    {% endif %}
+                </td>
+                <td>
+                    <div class="row-actions">
+                        <button onclick="togglePublish('{{ f.id }}', {{ 'true' if not f.is_published else 'false' }})">
+                            {{ 'Опубликовать' if not f.is_published else 'Снять' }}
+                        </button>
+                        <button class="secondary btn-edit"
+                                data-id="{{ f.id }}"
+                                data-name="{{ f.name }}"
+                                data-desc="{{ f.description }}"
+                                data-lf-name="{{ f.langflow_name }}"
+                                data-lf-desc="{{ f.langflow_description }}">✎ Изменить</button>
+                    </div>
+                </td>
+            </tr>
+        {% endfor %}
+        {% if not flows %}
+            <tr><td colspan="5" class="muted">Нет flow из Langflow</td></tr>
+        {% endif %}
+        </tbody>
+    </table>
+</div>
+
+<div id="editModal" class="modal-backdrop" style="display:none;">
+    <div class="modal">
+        <h3>Редактировать агента</h3>
+
+        <div class="field">
+            <div class="label-row">
+                <label for="editName">Название</label>
+                <button type="button" class="btn-field-reset" id="resetNameBtn"
+                        title="Сбросить к значению из Langflow">↺ Сбросить</button>
+            </div>
+            <input type="text" id="editName" maxlength="200">
+        </div>
+
+        <div class="field">
+            <div class="label-row">
+                <label for="editDesc">Описание</label>
+                <button type="button" class="btn-field-reset" id="resetDescBtn"
+                        title="Сбросить к значению из Langflow">↺ Сбросить</button>
+            </div>
+            <textarea id="editDesc" rows="4"></textarea>
+        </div>
+
+        <p class="muted" style="font-size:.82rem; margin-top:6px;">
+            Если значение совпадает с Langflow или поле пустое — при сохранении
+            override будет снят, и агент вернётся к оригиналу из Langflow.
+        </p>
+
+        <div class="modal-actions">
+            <button type="button" class="secondary" id="editCancel">Отмена</button>
+            <button type="button" id="editSave">Сохранить</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function togglePublish(flowId, publish) {
+    try {
+        const res = await fetch('/admin/publish', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({flow_id: flowId, publish: publish})
+        });
+        if (res.ok) location.reload();
+        else alert('Ошибка: ' + res.status);
+    } catch (e) { alert('Ошибка сети: ' + e.message); }
+}
+
+const modal      = document.getElementById('editModal');
+const nameInput  = document.getElementById('editName');
+const descInput  = document.getElementById('editDesc');
+const resetName  = document.getElementById('resetNameBtn');
+const resetDesc  = document.getElementById('resetDescBtn');
+
+let editingId = null;
+let lfName = '';
+let lfDesc = '';
+
+function refreshResetButtons() {
+    resetName.disabled = nameInput.value.trim() === (lfName || '').trim();
+    resetDesc.disabled = descInput.value.trim() === (lfDesc || '').trim();
+}
+
+nameInput.addEventListener('input', refreshResetButtons);
+descInput.addEventListener('input', refreshResetButtons);
+
+resetName.addEventListener('click', () => {
+    nameInput.value = lfName || '';
+    refreshResetButtons();
+    nameInput.focus();
+});
+resetDesc.addEventListener('click', () => {
+    descInput.value = lfDesc || '';
+    refreshResetButtons();
+    descInput.focus();
+});
+
+document.querySelectorAll('.btn-edit').forEach(btn => {
+    btn.addEventListener('click', () => {
+        editingId = btn.dataset.id;
+        lfName = btn.dataset.lfName || '';
+        lfDesc = btn.dataset.lfDesc || '';
+        nameInput.value = btn.dataset.name || '';
+        descInput.value = btn.dataset.desc || '';
+        refreshResetButtons();
+        modal.style.display = 'flex';
+        nameInput.focus();
+    });
+});
+
+function closeModal() {
+    modal.style.display = 'none';
+    editingId = null;
+}
+document.getElementById('editCancel').addEventListener('click', closeModal);
+modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && modal.style.display === 'flex') closeModal();
+});
+
+document.getElementById('editSave').addEventListener('click', async () => {
+    if (!editingId) return;
+    const rawName = nameInput.value;
+    const rawDesc = descInput.value;
+
+    const nameToSend = rawName.trim() === (lfName || '').trim() ? '' : rawName;
+    const descToSend = rawDesc.trim() === (lfDesc || '').trim() ? '' : rawDesc;
+
+    try {
+        const res = await fetch('/admin/flow/edit', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({flow_id: editingId, name: nameToSend, description: descToSend})
+        });
+        if (res.ok) location.reload();
+        else alert('Ошибка: ' + res.status);
+    } catch (e) { alert('Ошибка сети: ' + e.message); }
+});
+</script>
+{% endblock %}

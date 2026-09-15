@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
 from langflow_client import LangflowClient, extract_output_text, parse_thinking
-from models import Chat, ChatMessage, FlowPublication
+from models import Chat, ChatMessage, FlowPublication, LLMRequestLog
 from session import get_current_user
 from templating import templates
 
@@ -200,6 +200,19 @@ async def chat_send(
         )
     )
     chat.updated_at = datetime.utcnow()
+
+    # персистентный журнал — не удаляется вместе с чатом
+    db.add(
+        LLMRequestLog(
+            user_id=user["username"],
+            flow_id=flow_id,
+            chat_id=chat.id,
+            chat_title=chat.title,
+            question=text_in,
+            answer=answer or "",
+            thinking=thinking or None,
+        )
+    )
 
     await db.commit()
 
