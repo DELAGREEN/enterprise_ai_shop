@@ -3,6 +3,25 @@
 {% block admin_header %}История чатов пользователей{% endblock %}
 
 {% block admin_content %}
+<style>
+    .history-toolbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        margin: 0 0 12px;
+        flex-wrap: wrap;
+    }
+    .history-toolbar .hint { margin: 0; }
+    .toggle-think {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+    }
+    /* По умолчанию мышление скрыто */
+    .log-think { display: none; }
+    .log-think.visible { display: block; }
+</style>
 {# ---------- Статистика ---------- #}
 <div class="stats-grid">
     <div class="stat-card">
@@ -83,11 +102,17 @@
 
 </form>
 
-<p class="muted" style="margin: 0 0 10px;">
-    Найдено записей: <b>{{ total }}</b>
-    {% if total %} · страница {{ page }} из {{ pages }}{% endif %}
-    · даты в фильтре — в локальной таймзоне
-</p>
+<div class="history-toolbar">
+    <p class="muted hint">
+        Найдено записей: <b>{{ total }}</b>
+        {% if total %} · страница {{ page }} из {{ pages }}{% endif %}
+        · даты в фильтре — в локальной таймзоне (UTC{{ '+' if cfg_tz >= 0 }}{{ cfg_tz }})
+    </p>
+    <button type="button" class="secondary toggle-think" id="toggleThinkBtn"
+            title="Показать/скрыть блоки мышления модели">
+        🧠 Показать мышление
+    </button>
+</div>
 
 {# ---------- Список ---------- #}
 <div class="card">
@@ -163,4 +188,31 @@
     {% endif %}
 </div>
 {% endif %}
+
+{# ---------- JS для переключателя мышления (всегда в конце) ---------- #}
+<script>
+(function () {
+    const btn = document.getElementById('toggleThinkBtn');
+    if (!btn) return;
+
+    const STORAGE_KEY = 'admin_history_show_thinking';
+    let visible = localStorage.getItem(STORAGE_KEY) === '1';
+
+    function apply() {
+        document.querySelectorAll('.log-think').forEach(el => {
+            el.classList.toggle('visible', visible);
+        });
+        btn.textContent = visible ? '🧠 Скрыть мышление' : '🧠 Показать мышление';
+        btn.style.opacity = visible ? '1' : '0.75';
+    }
+
+    btn.addEventListener('click', () => {
+        visible = !visible;
+        localStorage.setItem(STORAGE_KEY, visible ? '1' : '0');
+        apply();
+    });
+
+    apply();
+})();
+</script>
 {% endblock %}

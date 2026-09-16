@@ -71,3 +71,11 @@ class LLMRequestLog(Base):
     answer = Column(Text, nullable=True)
     thinking = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+
+class AgentFavorite(Base):
+    __tablename__ = "agent_favorites"
+
+    user_id = Column(String, primary_key=True, index=True)
+    flow_id = Column(String, primary_key=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
