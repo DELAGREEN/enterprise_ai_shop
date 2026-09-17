@@ -52,10 +52,7 @@ def ldap_authenticate(username: str, password: str):
 
 
 def ldap_is_admin(user_dn: str) -> bool:
-    """
-    Проверяет членство user_dn в LDAP_ADMIN_GROUP.
-    Если LDAP_ADMIN_GROUP не задан — LDAP-пользователи НЕ получают админку.
-    """
+    """Проверяет членство user_dn в LDAP_ADMIN_GROUP."""
     if not config.LDAP_ADMIN_GROUP:
         logger.warning(
             "LDAP_ADMIN_GROUP не задан — LDAP-пользователи не получают прав админа"
@@ -92,29 +89,21 @@ def ldap_is_admin(user_dn: str) -> bool:
         return False
 
 
-def authenticate_full(username: str, password: str) -> dict | None:
+def authenticate_ldap(username: str, password: str) -> dict | None:
     """
-    Полная аутентификация.
-    Возвращает словарь для сессии:
-        {"username": ..., "user_dn": ..., "is_admin": bool}
-    или None, если вход неудачен.
+    Чистая LDAP-аутентификация. БД не трогает.
+
+    Возвращает словарь для сессии или None:
+        {"username": str, "user_dn": str, "is_ldap_admin": bool}
     """
     ok, user_dn = ldap_authenticate(username, password)
+    if not ok:
+        return None
 
-    if ok:
-        is_admin = ldap_is_admin(user_dn) if config.LDAP_ADMIN_GROUP else False
-        logger.info(
-            "Вход %s (%s), is_admin=%s", username, user_dn, is_admin
-        )
-        return {"username": username, "user_dn": user_dn, "is_admin": is_admin}
+    is_ldap_admin = ldap_is_admin(user_dn) if config.LDAP_ADMIN_GROUP else False
 
-    # Fallback из .env — всегда админ
-    if username == config.ADMIN_USERNAME and password == config.ADMIN_PASSWORD:
-        logger.info("Fallback-вход администратора: %s", username)
-        return {
-            "username": username,
-            "user_dn": f"cn={username},dc=fallback",
-            "is_admin": True,
-        }
-
-    return None
+    return {
+        "username": username,
+        "user_dn": user_dn,
+        "is_ldap_admin": is_ldap_admin,
+    }

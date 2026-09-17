@@ -5,57 +5,74 @@
 {% block admin_content %}
 <div class="card">
     <table>
-        <thead>
-            <tr>
-                <th>ID</th>
-                <th>Название</th>
-                <th>Описание</th>
-                <th>Статус</th>
-                <th style="width: 240px;">Действия</th>
-            </tr>
-        </thead>
-        <tbody>
-        {% for f in flows %}
-            <tr data-flow-id="{{ f.id }}">
-                <td><code>{{ f.id }}</code></td>
-                <td>
-                    <span class="cell-name">{{ f.name }}</span>
-                    {% if f.name_overridden %}
-                        <span class="badge custom" title="Переопределено вручную">✎</span>
-                    {% endif %}
-                </td>
-                <td class="muted">
-                    <span class="cell-desc">{{ f.description or '—' }}</span>
-                    {% if f.description_overridden %}
-                        <span class="badge custom" title="Переопределено вручную">✎</span>
-                    {% endif %}
-                </td>
-                <td>
-                    {% if f.is_published %}
-                        <span class="badge ok">Опубликован</span>
-                    {% else %}
-                        <span class="badge no">Нет</span>
-                    {% endif %}
-                </td>
-                <td>
-                    <div class="row-actions">
-                        <button onclick="togglePublish('{{ f.id }}', {{ 'true' if not f.is_published else 'false' }})">
-                            {{ 'Опубликовать' if not f.is_published else 'Снять' }}
-                        </button>
-                        <button class="secondary btn-edit"
-                                data-id="{{ f.id }}"
-                                data-name="{{ f.name }}"
-                                data-desc="{{ f.description }}"
-                                data-lf-name="{{ f.langflow_name }}"
-                                data-lf-desc="{{ f.langflow_description }}">✎ Изменить</button>
-                    </div>
-                </td>
-            </tr>
-        {% endfor %}
-        {% if not flows %}
-            <tr><td colspan="5" class="muted">Нет flow из Langflow</td></tr>
-        {% endif %}
-        </tbody>
+<thead>
+    <tr>
+        <th>ID</th>
+        <th>Название</th>
+        <th>Описание</th>
+        <th>Группы</th>          {# 👈 обычный <th>, без данных #}
+        <th>Статус</th>
+        <th style="width: 240px;">Действия</th>
+    </tr>
+</thead>
+<tbody>
+{% for f in flows %}
+    <tr data-flow-id="{{ f.id }}">
+        <td><code>{{ f.id }}</code></td>
+        <td>
+            <span class="cell-name">{{ f.name }}</span>
+            {% if f.name_overridden %}
+                <span class="badge custom" title="Переопределено вручную">✎</span>
+            {% endif %}
+        </td>
+        <td class="muted">
+            <span class="cell-desc">{{ f.description or '—' }}</span>
+            {% if f.description_overridden %}
+                <span class="badge custom" title="Переопределено вручную">✎</span>
+            {% endif %}
+        </td>
+
+        {# ЯЧЕЙКА С ГРУППАМИ — внутри <tr>, внутри цикла #}
+        <td>
+            {% set gids = flow_groups.get(f.id, []) %}
+            {% if gids %}
+                {% for gid in gids %}
+                    <span class="group-badge">{{ all_groups.get(gid, gid) }}</span>
+                {% endfor %}
+            {% else %}
+                <span class="group-badge restricted" title="Ни одна группа не назначена — агент видят только администраторы">
+                    Администратор
+                </span>
+            {% endif %}
+        </td>
+
+        <td>
+            {% if f.is_published %}
+                <span class="badge ok">Опубликован</span>
+            {% else %}
+                <span class="badge no">Нет</span>
+            {% endif %}
+        </td>
+        <td>
+            <div class="row-actions">
+                <button onclick="togglePublish('{{ f.id }}', {{ 'true' if not f.is_published else 'false' }})">
+                    {{ 'Опубликовать' if not f.is_published else 'Снять' }}
+                </button>
+                <button class="secondary btn-edit"
+                        data-id="{{ f.id }}"
+                        data-name="{{ f.name }}"
+                        data-desc="{{ f.description }}"
+                        data-lf-name="{{ f.langflow_name }}"
+                        data-lf-desc="{{ f.langflow_description }}">✎ Изменить</button>
+                <button class="secondary btn-groups" data-id="{{ f.id }}">🔐 Группы</button>
+            </div>
+        </td>
+    </tr>
+{% endfor %}
+{% if not flows %}
+    <tr><td colspan="6" class="muted">Нет flow из Langflow</td></tr>   {# 👈 6, а не 5 #}
+{% endif %}
+</tbody>
     </table>
 </div>
 
@@ -89,6 +106,20 @@
         <div class="modal-actions">
             <button type="button" class="secondary" id="editCancel">Отмена</button>
             <button type="button" id="editSave">Сохранить</button>
+        </div>
+    </div>
+</div>
+
+<div id="groupsModal" class="modal-backdrop" style="display:none;">
+    <div class="modal">
+        <h3 id="groupsModalTitle">Группы агента</h3>
+        <p class="muted" style="margin-top:0; font-size:.85rem;">
+        Если ни одна группа не отмечена — агент доступен <b>только администраторам</b>.
+        </p>
+        <div class="groups-list" id="agentGroupsList"></div>
+        <div class="modal-actions">
+            <button type="button" class="secondary" id="groupsCancel">Отмена</button>
+            <button type="button" id="groupsSave">Сохранить</button>
         </div>
     </div>
 </div>
@@ -177,6 +208,67 @@ document.getElementById('editSave').addEventListener('click', async () => {
         if (res.ok) location.reload();
         else alert('Ошибка: ' + res.status);
     } catch (e) { alert('Ошибка сети: ' + e.message); }
+});
+
+const ALL_GROUPS = {{ all_groups | tojson }};   // {id: name}
+const groupsModal = document.getElementById('groupsModal');
+const groupsListEl = document.getElementById('agentGroupsList');
+const groupsTitleEl = document.getElementById('groupsModalTitle');
+let editingAgentId = null;
+
+document.querySelectorAll('.btn-groups').forEach(btn => {
+    btn.addEventListener('click', async () => {
+        editingAgentId = btn.dataset.id;
+        groupsTitleEl.textContent = 'Группы агента ' + editingAgentId.slice(0, 8) + '…';
+
+        // Подтягиваем текущие группы
+        const res = await fetch('/admin/agent/' + editingAgentId + '/groups');
+        const data = await res.json();
+        const current = data.group_ids || [];
+
+        groupsListEl.innerHTML = '';
+        Object.entries(ALL_GROUPS).forEach(([gid, gname]) => {
+            const label = document.createElement('label');
+            const cb = document.createElement('input');
+            cb.type = 'checkbox';
+            cb.value = gid;
+            cb.checked = current.includes(gid);
+
+            const span = document.createElement('span');
+            span.textContent = gname;
+
+            label.appendChild(cb);
+            label.appendChild(span);
+            groupsListEl.appendChild(label);
+        });
+
+        groupsModal.style.display = 'flex';
+    });
+});
+
+function closeGroupsModal() {
+    groupsModal.style.display = 'none';
+    editingAgentId = null;
+}
+document.getElementById('groupsCancel').addEventListener('click', closeGroupsModal);
+groupsModal.addEventListener('click', (e) => { if (e.target === groupsModal) closeGroupsModal(); });
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && groupsModal.style.display === 'flex') closeGroupsModal();
+});
+
+document.getElementById('groupsSave').addEventListener('click', async () => {
+    if (!editingAgentId) return;
+    const ids = Array.from(groupsListEl.querySelectorAll('input[type=checkbox]:checked'))
+                     .map(cb => cb.value);
+    try {
+        const res = await fetch('/admin/agent/groups', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({flow_id: editingAgentId, group_ids: ids})
+        });
+        if (!res.ok) throw new Error(await res.text());
+        location.reload();
+    } catch (e) { alert('Ошибка: ' + e.message); }
 });
 </script>
 {% endblock %}

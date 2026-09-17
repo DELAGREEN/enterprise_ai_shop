@@ -126,12 +126,24 @@
     .kv-table th, .kv-table td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #e5e7eb; }
     .kv-table th { width: 280px; color: #4b5563; font-weight: 500; }
     .kv-table code { background: #f3f4f6; padding: 2px 6px; border-radius: 4px; font-size: .9em; }
+    .group-badge {
+    display: inline-block; padding: 2px 8px; border-radius: 999px;
+    font-size: .75rem; background: #e0e7ff; color: #3730a3; margin-right: 4px;
+    }
+    .group-badge.none { background: #f3f4f6; color: #6b7280; }
+    .badge-system {
+    background: #fef3c7; color: #78350f; padding: 3px 8px;
+    border-radius: 999px; font-size: .75rem; margin-left: 4px;
+    cursor: help;
+    }
 </style>
 
 <h1>{% block admin_header %}Админка{% endblock %}</h1>
 
 <nav class="admin-tabs">
     <a href="/admin/publications" class="{% if active_menu == 'publications' %}active{% endif %}">📦 Публикации</a>
+    <a href="/admin/groups" class="{% if active_menu == 'groups' %}active{% endif %}">👥 Группы</a>
+    <a href="/admin/users" class="{% if active_menu == 'users' %}active{% endif %}">👤 Пользователи</a>
     <a href="/admin/history" class="{% if active_menu == 'history' %}active{% endif %}">💬 История чатов</a>
     <a href="/admin/settings" class="{% if active_menu == 'settings' %}active{% endif %}">⚙️ Настройки</a>
 </nav>

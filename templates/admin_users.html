@@ -1,0 +1,148 @@
+{% extends "admin_base.html" %}
+{% block admin_title %}Пользователи{% endblock %}
+{% block admin_header %}Пользователи{% endblock %}
+
+{% block admin_content %}
+<style>
+    .group-badge {
+        display: inline-block; padding: 2px 8px; border-radius: 999px;
+        font-size: .78rem; background: #e0e7ff; color: #3730a3; margin-right: 4px;
+    }
+    .group-badge.system { background: #fde68a; color: #78350f; }
+    .group-badge.none { background: #f3f4f6; color: #6b7280; }
+    .modal { width: 480px; }
+    .groups-list { display: flex; flex-direction: column; gap: 8px; max-height: 300px; overflow-y: auto; }
+    .groups-list label {
+        display: flex; align-items: center; gap: 8px;
+        padding: 8px 10px; border: 1px solid #e5e7eb; border-radius: 8px;
+        cursor: pointer; font-size: .95rem;
+    }
+    .groups-list label:hover { background: #f9fafb; }
+    .groups-list input[type=checkbox] { width: 16px; height: 16px; }
+</style>
+
+<div class="card">
+    <table>
+        <thead>
+            <tr>
+                <th>Пользователь</th>
+                <th>Зарегистрирован</th>
+                <th>Последний вход</th>
+                <th>Группы</th>
+                <th style="width: 140px;">Действия</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for u in users %}
+            <tr>
+                <td><b>{{ u.username }}</b></td>
+                <td class="muted">{{ u.created_at | localtime }}</td>
+                <td class="muted">{{ u.last_login | localtime }}</td>
+                <td>
+                    {% set user_groups = [] %}
+                    {% for g in groups %}
+                        {% if g.id in u.group_ids %}
+                            {% set _ = user_groups.append(g) %}
+                            <span class="group-badge {% if g.is_system %}system{% endif %}">{{ g.name }}</span>
+                        {% endif %}
+                    {% endfor %}
+                    {% if not user_groups %}
+                        <span class="group-badge none">без групп</span>
+                    {% endif %}
+                </td>
+                <td>
+                    <button class="secondary"
+                            data-username="{{ u.username }}"
+                            data-group-ids="{{ u.group_ids | join(',') }}"
+                            onclick="openUserModal(this)">👥 Группы</button>
+                </td>
+            </tr>
+        {% endfor %}
+        {% if not users %}
+            <tr><td colspan="5" class="muted" style="text-align:center; padding:20px;">
+                Ещё никто не входил в систему
+            </td></tr>
+        {% endif %}
+        </tbody>
+    </table>
+</div>
+
+<div id="userModal" class="modal-backdrop" style="display:none;">
+    <div class="modal">
+        <h3 id="userModalTitle">Группы пользователя</h3>
+        <p class="muted" style="margin-top:0; font-size:.85rem;">
+            Отметьте группы, в которых состоит пользователь. Изменения вступят в силу
+            при следующем входе пользователя.
+        </p>
+        <div class="groups-list" id="groupsList"></div>
+        <div class="modal-actions">
+            <button type="button" class="secondary" id="userCancel">Отмена</button>
+            <button type="button" id="userSave">Сохранить</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const ALL_GROUPS = {{ groups | tojson }};
+
+const modal      = document.getElementById('userModal');
+const titleEl    = document.getElementById('userModalTitle');
+const listEl     = document.getElementById('groupsList');
+let currentUser  = null;
+
+function openUserModal(btn) {
+    currentUser = btn.dataset.username;
+    const current = (btn.dataset.groupIds || '').split(',').filter(Boolean);
+
+    titleEl.textContent = 'Группы: ' + currentUser;
+    listEl.innerHTML = '';
+
+    ALL_GROUPS.forEach(g => {
+        const id = 'g_' + g.id;
+        const label = document.createElement('label');
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.value = g.id;
+        cb.id = id;
+        cb.checked = current.includes(g.id);
+
+        const span = document.createElement('span');
+        span.textContent = g.name + (g.is_system ? ' (системная)' : '');
+
+        label.appendChild(cb);
+        label.appendChild(span);
+        listEl.appendChild(label);
+    });
+
+    modal.style.display = 'flex';
+}
+
+function closeModal() {
+    modal.style.display = 'none';
+    currentUser = null;
+}
+
+document.getElementById('userCancel').addEventListener('click', closeModal);
+modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && modal.style.display === 'flex') closeModal();
+});
+
+document.getElementById('userSave').addEventListener('click', async () => {
+    if (!currentUser) return;
+    const ids = Array.from(listEl.querySelectorAll('input[type=checkbox]:checked'))
+                     .map(cb => cb.value);
+    try {
+        const res = await fetch('/admin/user/groups', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({username: currentUser, group_ids: ids})
+        });
+        if (!res.ok) throw new Error(await res.text());
+        location.reload();
+    } catch (e) { alert('Ошибка: ' + e.message); }
+});
+</script>
+{% endblock %}

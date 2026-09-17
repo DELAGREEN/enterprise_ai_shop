@@ -1,10 +1,11 @@
 import logging
+import uuid
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select, text, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import (
@@ -21,7 +22,17 @@ from config import (
 )
 from database import get_db
 from langflow_client import LangflowClient
-from models import Chat, ChatMessage, FlowPublication, LLMRequestLog
+from models import (
+    AgentFavorite,
+    AgentGroup,         
+    Chat,
+    ChatMessage,
+    FlowPublication,
+    Group,              
+    LLMRequestLog,
+    User,
+    UserGroup,
+)
 from session import get_current_user
 from templating import templates
 
@@ -88,6 +99,15 @@ async def admin_publications(request: Request, db: AsyncSession = Depends(get_db
     if not user.get("is_admin"):
         return RedirectResponse(url="/", status_code=302)
 
+    # Загружаем все группы и их привязки к агентам
+    g_res = await db.execute(select(Group))
+    all_groups = {g.id: g.name for g in g_res.scalars().all()}
+
+    ag_res = await db.execute(select(AgentGroup.flow_id, AgentGroup.group_id))
+    flow_groups: dict[str, list[str]] = {}
+    for fid, gid in ag_res.all():
+        flow_groups.setdefault(fid, []).append(gid)
+
     client = LangflowClient()
     flows = await client.get_all_flows()
 
@@ -122,6 +142,8 @@ async def admin_publications(request: Request, db: AsyncSession = Depends(get_db
             "flows": items,
             "user": user,
             "active_menu": "publications",
+            "all_groups": all_groups,       
+            "flow_groups": flow_groups,     
         },
     )
 
@@ -398,3 +420,223 @@ async def admin_settings(request: Request, db: AsyncSession = Depends(get_db)):
             },
         },
     )
+
+
+# ---------- GROUPS ----------
+
+@router.get("/groups", response_class=HTMLResponse)
+async def admin_groups(request: Request, db: AsyncSession = Depends(get_db)):
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/auth/login", status_code=302)
+    if not user.get("is_admin"):
+        return RedirectResponse(url="/", status_code=302)
+
+    res = await db.execute(select(Group).order_by(Group.is_system.desc(), Group.name))
+    groups = list(res.scalars().all())
+
+    mem_res = await db.execute(
+        select(UserGroup.group_id, func.count()).group_by(UserGroup.group_id)
+    )
+    members = dict(mem_res.all())
+
+    ag_res = await db.execute(
+        select(AgentGroup.group_id, func.count()).group_by(AgentGroup.group_id)
+    )
+    agents = dict(ag_res.all())
+
+    items = [{
+        "id": g.id, "name": g.name, "description": g.description,
+        "is_system": g.is_system,
+        "members": members.get(g.id, 0),
+        "agents": agents.get(g.id, 0),
+    } for g in groups]
+
+    return templates.TemplateResponse(
+        "admin_groups.html",
+        {"request": request, "user": user, "active_menu": "groups", "groups": items},
+    )
+
+
+class GroupCreatePayload(BaseModel):
+    name: str
+    description: str | None = None
+
+
+@router.post("/groups/create")
+async def groups_create(
+    payload: GroupCreatePayload, request: Request, db: AsyncSession = Depends(get_db)
+):
+    _require_admin(request)
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Пустое название")
+
+    res = await db.execute(select(Group).where(Group.name == name))
+    if res.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="Группа с таким именем уже существует")
+
+    gid = uuid.uuid4().hex
+    db.add(Group(id=gid, name=name, description=(payload.description or "").strip() or None))
+    await db.commit()
+    return {"status": "ok", "id": gid}
+
+
+class GroupEditPayload(BaseModel):
+    id: str
+    name: str
+    description: str | None = None
+
+
+@router.post("/groups/edit")
+async def groups_edit(
+    payload: GroupEditPayload, request: Request, db: AsyncSession = Depends(get_db)
+):
+    _require_admin(request)
+    g = await db.get(Group, payload.id)
+    if not g:
+        raise HTTPException(status_code=404, detail="Группа не найдена")
+
+    # системные группы редактировать нельзя
+    if g.is_system:
+        raise HTTPException(status_code=400, detail="Системную группу нельзя редактировать")
+
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Пустое название")
+
+    res = await db.execute(select(Group).where(Group.name == name, Group.id != payload.id))
+    if res.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="Имя уже занято")
+
+    g.name = name
+    g.description = (payload.description or "").strip() or None
+    await db.commit()
+    return {"status": "ok"}
+
+
+class GroupDeletePayload(BaseModel):
+    id: str
+
+
+@router.post("/groups/delete")
+async def groups_delete(
+    payload: GroupDeletePayload, request: Request, db: AsyncSession = Depends(get_db)
+):
+    _require_admin(request)
+    g = await db.get(Group, payload.id)
+    if not g:
+        raise HTTPException(status_code=404, detail="Группа не найдена")
+    if g.is_system:
+        raise HTTPException(status_code=400, detail="Системную группу удалить нельзя")
+
+    await db.execute(delete(UserGroup).where(UserGroup.group_id == g.id))
+    await db.execute(delete(AgentGroup).where(AgentGroup.group_id == g.id))
+    await db.delete(g)
+    await db.commit()
+    return {"status": "ok"}
+
+
+# ---------- USERS ----------
+
+@router.get("/users", response_class=HTMLResponse)
+async def admin_users(request: Request, db: AsyncSession = Depends(get_db)):
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse(url="/auth/login", status_code=302)
+    if not user.get("is_admin"):
+        return RedirectResponse(url="/", status_code=302)
+
+    res = await db.execute(select(User).order_by(User.username))
+    users = list(res.scalars().all())
+
+    ug_res = await db.execute(select(UserGroup))
+    memberships: dict[str, set[str]] = {}
+    for ug in ug_res.scalars().all():
+        memberships.setdefault(ug.username, set()).add(ug.group_id)
+
+    g_res = await db.execute(select(Group).order_by(Group.is_system.desc(), Group.name))
+    all_groups = list(g_res.scalars().all())
+
+    items = [{
+        "username": u.username,
+        "created_at": u.created_at,
+        "last_login": u.last_login,
+        "group_ids": memberships.get(u.username, set()),
+    } for u in users]
+
+    return templates.TemplateResponse(
+        "admin_users.html",
+        {
+            "request": request, "user": user, "active_menu": "users",
+            "users": items,
+            "groups": [{"id": g.id, "name": g.name, "is_system": g.is_system}
+                       for g in all_groups],
+        },
+    )
+
+
+class UserGroupsPayload(BaseModel):
+    username: str
+    group_ids: list[str]
+
+
+@router.post("/user/groups")
+async def set_user_groups(
+    payload: UserGroupsPayload, request: Request, db: AsyncSession = Depends(get_db)
+):
+    _require_admin(request)
+    u = await db.get(User, payload.username)
+    if not u:
+        raise HTTPException(status_code=404, detail="Пользователь не найден")
+
+    if payload.group_ids:
+        res = await db.execute(select(Group.id).where(Group.id.in_(payload.group_ids)))
+        existing = {gid for (gid,) in res.all()}
+        missing = set(payload.group_ids) - existing
+        if missing:
+            raise HTTPException(status_code=400, detail=f"Группы не найдены: {missing}")
+
+    await db.execute(delete(UserGroup).where(UserGroup.username == payload.username))
+    for gid in payload.group_ids:
+        db.add(UserGroup(username=payload.username, group_id=gid))
+    await db.commit()
+    return {"status": "ok"}
+
+
+# ---------- AGENT GROUPS ----------
+
+@router.get("/agent/{flow_id}/groups")
+async def agent_groups_get(
+    flow_id: str, request: Request, db: AsyncSession = Depends(get_db)
+):
+    _require_admin(request)
+    res = await db.execute(
+        select(AgentGroup.group_id).where(AgentGroup.flow_id == flow_id)
+    )
+    return {"flow_id": flow_id, "group_ids": [gid for (gid,) in res.all()]}
+
+
+class AgentGroupsPayload(BaseModel):
+    flow_id: str
+    group_ids: list[str]
+
+
+@router.post("/agent/groups")
+async def agent_groups_set(
+    payload: AgentGroupsPayload, request: Request, db: AsyncSession = Depends(get_db)
+):
+    _require_admin(request)
+
+    if payload.group_ids:
+        res = await db.execute(select(Group.id).where(Group.id.in_(payload.group_ids)))
+        existing = {gid for (gid,) in res.all()}
+        missing = set(payload.group_ids) - existing
+        if missing:
+            raise HTTPException(status_code=400, detail=f"Группы не найдены: {missing}")
+
+    await db.execute(delete(AgentGroup).where(AgentGroup.flow_id == payload.flow_id))
+    for gid in payload.group_ids:
+        db.add(AgentGroup(flow_id=payload.flow_id, group_id=gid))
+    await db.commit()
+    return {"status": "ok"}

@@ -1,0 +1,161 @@
+{% extends "admin_base.html" %}
+{% block admin_title %}Группы{% endblock %}
+{% block admin_header %}Группы пользователей{% endblock %}
+
+{% block admin_content %}
+<style>
+    .badge-system { background: #dbeafe; color: #1e40af; padding: 3px 8px; border-radius: 999px; font-size: .75rem; margin-left: 4px; }
+    .modal { width: 480px; }
+    .badge-system {
+    background: #fef3c7; color: #78350f; padding: 3px 8px;
+    border-radius: 999px; font-size: .75rem; margin-left: 4px;
+    cursor: help;
+    }
+</style>
+
+<div style="margin-bottom: 16px;">
+    <button id="createGroupBtn">+ Создать группу</button>
+</div>
+
+<div class="card">
+    <table>
+        <thead>
+            <tr>
+                <th>Название</th>
+                <th>Описание</th>
+                <th>Участников</th>
+                <th>Агентов</th>
+                <th style="width: 200px;">Действия</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for g in groups %}
+            <tr>
+                <td>
+                    <b>{{ g.name }}</b>
+                    {% if g.is_system %}<span class="badge-system">системная</span>{% endif %}
+                </td>
+                <td>
+                    <b>{{ g.name }}</b>
+                    {% if g.is_system %}
+                        <span class="badge-system" title="Системная группа — изменить или удалить нельзя">
+                            🔒 системная
+                        </span>
+                    {% endif %}
+                </td>
+                <td class="muted">{{ g.description or '—' }}</td>
+                <td>{{ g.members }}</td>
+                <td>{{ g.agents }}</td>
+                <td>
+                    <div class="row-actions">
+                        {% if not g.is_system %}
+                            <button class="secondary"
+                                    data-id="{{ g.id }}"
+                                    data-name="{{ g.name }}"
+                                    data-desc="{{ g.description or '' }}"
+                                    onclick="openEditModal(this)">✎ Изменить</button>
+                            <button class="danger"
+                                    onclick="deleteGroup('{{ g.id }}', '{{ g.name }}')">🗑</button>
+                        {% else %}
+                            <span class="muted" style="font-size:.85rem;">системная</span>
+                        {% endif %}
+                    </div>
+                </td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<div id="groupModal" class="modal-backdrop" style="display:none;">
+    <div class="modal">
+        <h3 id="groupModalTitle">Создать группу</h3>
+        <div class="field">
+            <div class="label-row"><label>Название</label></div>
+            <input type="text" id="groupName" maxlength="100">
+        </div>
+        <div class="field">
+            <div class="label-row"><label>Описание</label></div>
+            <textarea id="groupDesc" rows="3"></textarea>
+        </div>
+        <div class="modal-actions">
+            <button type="button" class="secondary" id="groupCancel">Отмена</button>
+            <button type="button" id="groupSave">Сохранить</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const modal   = document.getElementById('groupModal');
+const nameEl  = document.getElementById('groupName');
+const descEl  = document.getElementById('groupDesc');
+const titleEl = document.getElementById('groupModalTitle');
+let editingId = null;
+
+function openModal(title, name, desc, id) {
+    titleEl.textContent = title;
+    nameEl.value = name || '';
+    descEl.value = desc || '';
+    editingId = id;
+    modal.style.display = 'flex';
+    nameEl.focus();
+}
+
+function closeModal() {
+    modal.style.display = 'none';
+    editingId = null;
+}
+
+document.getElementById('createGroupBtn').addEventListener('click', () => {
+    openModal('Создать группу', '', '', null);
+});
+
+function openEditModal(btn) {
+    openModal('Редактировать группу', btn.dataset.name, btn.dataset.desc, btn.dataset.id);
+}
+
+document.getElementById('groupCancel').addEventListener('click', closeModal);
+modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && modal.style.display === 'flex') closeModal();
+});
+
+document.getElementById('groupSave').addEventListener('click', async () => {
+    const name = nameEl.value.trim();
+    if (!name) { alert('Введите название'); return; }
+
+    const url = editingId ? '/admin/groups/edit' : '/admin/groups/create';
+    const body = editingId
+        ? {id: editingId, name, description: descEl.value}
+        : {name, description: descEl.value};
+
+    try {
+        const res = await fetch(url, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(body)
+        });
+        if (!res.ok) {
+            const t = await res.text();
+            throw new Error(t);
+        }
+        location.reload();
+    } catch (e) { alert('Ошибка: ' + e.message); }
+});
+
+async function deleteGroup(id, name) {
+    if (!confirm('Удалить группу «' + name + '»? Все привязки участников и агентов будут сняты.')) return;
+    try {
+        const res = await fetch('/admin/groups/delete', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({id})
+        });
+        if (!res.ok) throw new Error(await res.text());
+        location.reload();
+    } catch (e) { alert('Ошибка: ' + e.message); }
+}
+</script>
+{% endblock %}

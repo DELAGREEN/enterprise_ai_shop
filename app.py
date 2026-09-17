@@ -3,9 +3,11 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse
-from sqlalchemy import text
+from sqlalchemy import select, text
 
-from database import Base, engine
+from database import AsyncSessionLocal, Base, engine
+from models import Group
+
 from session import get_current_user
 from routers import admin, auth, chat, public
 
@@ -21,6 +23,20 @@ MIGRATIONS = [
     "ALTER TABLE flow_publications ADD COLUMN IF NOT EXISTS override_description TEXT",
 ]
 
+DEFAULT_GROUPS = [
+    ("users",  "Пользователь",  "Базовая группа: доступна всем зарегистрированным"),
+    ("admins", "Администратор", "Полный доступ к админке"),
+]
+
+async def _seed_defaults():
+    """Идемпотентно создаёт системные группы users/admins, если их нет."""
+    async with AsyncSessionLocal() as db:
+        for gid, name, desc in DEFAULT_GROUPS:
+            res = await db.execute(select(Group).where(Group.id == gid))
+            if res.scalar_one_or_none() is None:
+                db.add(Group(id=gid, name=name, description=desc, is_system=True))
+                logger.info("Создана системная группа: %s", gid)
+        await db.commit()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -31,7 +47,11 @@ async def lifespan(app: FastAPI):
                 await conn.execute(text(stmt))
             except Exception as e:
                 logger.warning("Миграция пропущена (%s): %s", stmt, e)
-    logger.info("Схема БД инициализирована")
+
+    # Засев системных групп ПОСЛЕ создания таблиц
+    await _seed_defaults()
+
+    logger.info("Схема БД инициализирована, системные группы проверены")
     yield
     await engine.dispose()
     logger.info("Приложение остановлено")
