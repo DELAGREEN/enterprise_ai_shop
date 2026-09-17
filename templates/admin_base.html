@@ -141,11 +141,11 @@
 <h1>{% block admin_header %}Админка{% endblock %}</h1>
 
 <nav class="admin-tabs">
-    <a href="/admin/publications" class="{% if active_menu == 'publications' %}active{% endif %}">📦 Публикации</a>
-    <a href="/admin/groups" class="{% if active_menu == 'groups' %}active{% endif %}">👥 Группы</a>
-    <a href="/admin/users" class="{% if active_menu == 'users' %}active{% endif %}">👤 Пользователи</a>
-    <a href="/admin/history" class="{% if active_menu == 'history' %}active{% endif %}">💬 История чатов</a>
-    <a href="/admin/settings" class="{% if active_menu == 'settings' %}active{% endif %}">⚙️ Настройки</a>
+    <a href="/admin/publications" class="{% if active_menu == 'publications' %}active{% endif %}">Публикации</a>
+    <a href="/admin/groups" class="{% if active_menu == 'groups' %}active{% endif %}">Группы</a>
+    <a href="/admin/users" class="{% if active_menu == 'users' %}active{% endif %}">Пользователи</a>
+    <a href="/admin/history" class="{% if active_menu == 'history' %}active{% endif %}">История чатов</a>
+    <a href="/admin/settings" class="{% if active_menu == 'settings' %}active{% endif %}">Настройки</a>
 </nav>
 
 {% block admin_content %}{% endblock %}

@@ -27,7 +27,7 @@
 </div>
 
 <div class="card" style="margin-bottom: 16px;">
-    <h3 style="margin-top:0;">💾 Размеры таблиц</h3>
+    <h3 style="margin-top:0;">Размеры таблиц</h3>
     <table class="kv-table">
         <tr><th>llm_request_log</th><td>{{ sizes.log | human_size }}</td></tr>
         <tr><th>chat_messages</th><td>{{ sizes.messages | human_size }}</td></tr>
@@ -38,15 +38,15 @@
 </div>
 
 <div class="card" style="margin-bottom: 16px;">
-    <h3 style="margin-top:0;">🌐 Langflow</h3>
+    <h3 style="margin-top:0;">Langflow</h3>
     <table class="kv-table">
         <tr><th>URL API</th><td><code>{{ cfg.langflow_url }}</code></td></tr>
-        <tr><th>API-ключ задан</th><td>{{ '✅ да' if cfg.langflow_api_key_set else '❌ нет' }}</td></tr>
+        <tr><th>API-ключ задан</th><td>{{ 'да' if cfg.langflow_api_key_set else 'нет' }}</td></tr>
     </table>
 </div>
 
 <div class="card" style="margin-bottom: 16px;">
-    <h3 style="margin-top:0;">🔐 LDAP</h3>
+    <h3 style="margin-top:0;">LDAP</h3>
     <table class="kv-table">
         <tr><th>Сервер</th><td><code>{{ cfg.ldap_server }}</code></td></tr>
         <tr><th>SSL</th><td>{{ 'включён' if cfg.ldap_use_ssl else 'выключен' }}</td></tr>
@@ -58,7 +58,7 @@
 </div>
 
 <div class="card" style="margin-bottom: 16px;">
-    <h3 style="margin-top:0;">🗄 База данных</h3>
+    <h3 style="margin-top:0;">База данных</h3>
     <table class="kv-table">
         <tr><th>DATABASE_URL</th><td><code>{{ cfg.database_url }}</code></td></tr>
         <tr><th>Сдвиг таймзоны</th><td>UTC{{ '+' if cfg.tz_offset >= 0 }}{{ cfg.tz_offset }}</td></tr>
@@ -66,7 +66,7 @@
 </div>
 
 <div class="card">
-    <h3 style="margin-top:0;">🧪 Runtime</h3>
+    <h3 style="margin-top:0;">Runtime</h3>
     <table class="kv-table">
         <tr><th>Python</th><td>{{ runtime.python }}</td></tr>
         <tr><th>FastAPI</th><td>{{ runtime.fastapi }}</td></tr>

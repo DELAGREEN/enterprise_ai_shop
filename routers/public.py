@@ -61,7 +61,7 @@ async def index(request: Request, db: AsyncSession = Depends(get_db)):
             "id": fid,
             "name": name,
             "description": desc,
-            "icon": "🤖",
+            "icon": "",
             "chat_count": chat_counts.get(fid, 0),
             "is_favorite": fid in favs,
             "favorited_at": favs[fid].created_at if fid in favs else None,

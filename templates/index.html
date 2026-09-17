@@ -84,7 +84,7 @@
             <p class="desc">{{ a.description or 'Без описания' }}</p>
             {% if a.chat_count %}
             <div class="meta">
-                💬 {{ a.chat_count }}
+                {{ a.chat_count }}
                 {{ 'чат' if a.chat_count == 1 else 'чата' }}
             </div>
             {% endif %}

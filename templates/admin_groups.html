@@ -4,13 +4,26 @@
 
 {% block admin_content %}
 <style>
-    .badge-system { background: #dbeafe; color: #1e40af; padding: 3px 8px; border-radius: 999px; font-size: .75rem; margin-left: 4px; }
-    .modal { width: 480px; }
     .badge-system {
-    background: #fef3c7; color: #78350f; padding: 3px 8px;
-    border-radius: 999px; font-size: .75rem; margin-left: 4px;
-    cursor: help;
+        background: #fef3c7; color: #78350f;
+        padding: 3px 8px; border-radius: 999px;
+        font-size: .75rem; margin-left: 4px;
+        cursor: help;
     }
+
+    /* Кнопка-иконка: фиксированный размер, чтобы не «прыгала» рядом с текстовой */
+    .btn-icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 34px;
+        height: 34px;
+        padding: 0;
+        font-size: 1rem;
+        line-height: 1;
+    }
+
+    .modal { width: 480px; }
 </style>
 
 <div style="margin-bottom: 16px;">
@@ -49,8 +62,9 @@
                                     data-id="{{ g.id }}"
                                     data-name="{{ g.name }}"
                                     data-desc="{{ g.description or '' }}"
-                                    onclick="openEditModal(this)">✎ Изменить</button>
-                            <button class="danger"
+                                    onclick="openEditModal(this)">Изменить</button>
+                            <button class="danger btn-icon"
+                                    title="Удалить группу"
                                     onclick="deleteGroup('{{ g.id }}', '{{ g.name }}')">🗑</button>
                         {% else %}
                             <span class="muted" style="font-size:.85rem;">Системная</span>

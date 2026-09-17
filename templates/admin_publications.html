@@ -63,14 +63,14 @@
                         data-name="{{ f.name }}"
                         data-desc="{{ f.description }}"
                         data-lf-name="{{ f.langflow_name }}"
-                        data-lf-desc="{{ f.langflow_description }}">✎ Изменить</button>
-                <button class="secondary btn-groups" data-id="{{ f.id }}">🔐 Группы</button>
+                        data-lf-desc="{{ f.langflow_description }}">Изменить</button>
+                <button class="secondary btn-groups" data-id="{{ f.id }}">Группы</button>
             </div>
         </td>
     </tr>
 {% endfor %}
 {% if not flows %}
-    <tr><td colspan="6" class="muted">Нет flow из Langflow</td></tr>   {# 👈 6, а не 5 #}
+    <tr><td colspan="6" class="muted">Нет flow из Langflow</td></tr>
 {% endif %}
 </tbody>
     </table>

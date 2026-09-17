@@ -110,7 +110,7 @@
     </p>
     <button type="button" class="secondary toggle-think" id="toggleThinkBtn"
             title="Показать/скрыть блоки мышления модели">
-        🧠 Показать мышление
+        Показать мышление
     </button>
 </div>
 
@@ -122,10 +122,10 @@
         {% for r in rows %}
             <div class="log-row">
                 <div class="log-head">
-                    <span>👤 <b>{{ r.user_id }}</b></span>
-                    <span>🤖 flow <code>{{ r.flow_id[:8] }}…</code></span>
+                    <span><b>{{ r.user_id }}</b></span>
+                    <span>flow <code>{{ r.flow_id[:8] }}…</code></span>
                     {% if r.chat_title %}
-                        <span>💬 <b>{{ r.chat_title }}</b></span>
+                        <span><b>{{ r.chat_title }}</b></span>
                     {% endif %}
                     <span>🕒 {{ r.created_at | localtime }}</span>
                     <span class="muted">#{{ r.id }}</span>
@@ -133,7 +133,7 @@
                 <div class="log-pair">
                     <div class="log-q"><b>Вопрос:</b><br>{{ r.question }}</div>
                     {% if r.thinking %}
-                        <div class="log-think"><b>🧠 Мышление:</b><br>{{ r.thinking }}</div>
+                        <div class="log-think"><b>Мышление:</b><br>{{ r.thinking }}</div>
                     {% endif %}
                     <div class="log-a"><b>Ответ:</b><br>{{ r.answer or '—' }}</div>
                 </div>
@@ -202,7 +202,7 @@
         document.querySelectorAll('.log-think').forEach(el => {
             el.classList.toggle('visible', visible);
         });
-        btn.textContent = visible ? '🧠 Скрыть мышление' : '🧠 Показать мышление';
+        btn.textContent = visible ? 'Скрыть мышление' : 'Показать мышление';
         btn.style.opacity = visible ? '1' : '0.75';
     }
 
