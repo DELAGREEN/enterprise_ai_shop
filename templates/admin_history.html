@@ -59,20 +59,32 @@
 {# ---------- Фильтры ---------- #}
 <form method="get" action="/admin/history" class="filter-bar">
     <label>Пользователь
-        <select name="user">
-            <option value="">— все —</option>
+        <input type="text"
+            name="user"
+            list="users-list"
+            value="{{ filters.user }}"
+            placeholder="логин..."
+            autocomplete="off"
+            style="min-width: 220px;">
+        <datalist id="users-list">
             {% for u in users %}
-                <option value="{{ u }}" {% if filters.user == u %}selected{% endif %}>{{ u }}</option>
+                <option value="{{ u }}"></option>
             {% endfor %}
-        </select>
+        </datalist>
     </label>
     <label>Flow ID
-        <select name="flow">
-            <option value="">— все —</option>
+        <input type="text"
+            name="flow"
+            list="flows-list"
+            value="{{ filters.flow }}"
+            placeholder="id..."
+            autocomplete="off"
+            style="min-width: 260px;">
+        <datalist id="flows-list">
             {% for f in flow_ids %}
-                <option value="{{ f }}" {% if filters.flow == f %}selected{% endif %}>{{ f }}</option>
+                <option value="{{ f }}"></option>
             {% endfor %}
-        </select>
+        </datalist>
     </label>
     <label>С даты
         <input type="date" name="from" value="{{ filters.from }}">
@@ -213,6 +225,29 @@
     });
 
     apply();
+})();
+
+/* Подсказки пользователей: фильтр по вхождению подстроки */
+(function () {
+    const input = document.querySelector('input[name="user"]');
+    const list  = document.getElementById('users-list');
+    if (!input || !list) return;
+
+    // Запоминаем все значения из datalist
+    const allUsers = Array.from(list.options).map(o => o.value);
+
+    input.addEventListener('input', () => {
+        const q = input.value.trim().toLowerCase();
+        list.innerHTML = '';
+        const filtered = q
+            ? allUsers.filter(u => u.toLowerCase().includes(q))
+            : allUsers;
+        for (const u of filtered) {
+            const opt = document.createElement('option');
+            opt.value = u;
+            list.appendChild(opt);
+        }
+    });
 })();
 </script>
 {% endblock %}

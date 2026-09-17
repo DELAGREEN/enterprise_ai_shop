@@ -56,6 +56,7 @@
     }
     .chat-item .date { font-size: .72rem; color: #6b7280; margin-top: 2px; }
     .chat-item .link {
+        cursor: pointer;
         display: block;
         text-decoration: none;
         color: inherit;
@@ -147,8 +148,9 @@
         background: #fff;
     }
     .chat-item.editing .actions { display: none; }     /* во время редактирования кнопки не мешают */
-    .chat-item.editing { background: #eff6ff; cursor: default; }
-    .chat-item .title { cursor: text; }
+    .chat-item.editing { 
+        background: #eff6ff; 
+        cursor: default; }
 
     /* Поле ввода */
     .input-row {
