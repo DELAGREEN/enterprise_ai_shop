@@ -31,7 +31,8 @@ SECRET_KEY = os.getenv("SECRET_KEY", "change-me-super-secret")
 
 # --- Fallback ---
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
+SYSTEM_ADMIN_ENABLED = bool(ADMIN_PASSWORD)
 
 # Сдвиг локальной таймзоны от UTC в часах. МСК = 3.
 LOCAL_TZ_OFFSET_HOURS = int(os.getenv("LOCAL_TZ_OFFSET_HOURS", "3"))

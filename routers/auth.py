@@ -6,7 +6,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from config import ADMIN_PASSWORD, ADMIN_USERNAME
+from config import ADMIN_PASSWORD, ADMIN_USERNAME, SYSTEM_ADMIN_ENABLED
 from database import get_db
 from ldap_auth import authenticate_ldap
 from models import User, UserGroup
@@ -84,13 +84,54 @@ async def login_submit(
     next: str = Form(""),
     db: AsyncSession = Depends(get_db),
 ):
-    # 1. Пробуем LDAP
-    result = authenticate_ldap(username, password)
+    # BREAK-GLASS: системный админ входит ТОЛЬКО по паролю из .env.
+    # LDAP для этого имени игнорируется. is_disabled не блокирует вход.
+    if username == ADMIN_USERNAME:
+        # Системный админ отключён через .env
+        if not SYSTEM_ADMIN_ENABLED:
+            logger.warning("Попытка входа, но учётка отключена через .env")
+            return templates.TemplateResponse(
+                "login.html",
+                {
+                    "request": request,
+                    "error": "Учётная запись отключена",
+                    "next": next,
+                },
+                status_code=403,
+            )
 
-    # 2. Fallback-админ из .env
-    if not result and username == ADMIN_USERNAME and password == ADMIN_PASSWORD:
-        logger.info("Fallback-вход администратора: %s", username)
-        result = {"username": username, "user_dn": "cn=fallback", "is_ldap_admin": True}
+        if password != ADMIN_PASSWORD:
+            return templates.TemplateResponse(
+                "login.html",
+                {"request": request, "error": "Неверный пароль", "next": next},
+                status_code=401,
+            )
+
+        user_row = await _sync_user(db, username)
+
+        # is_disabled в БД больше не блокирует break-glass.
+        # Источник правды — .env. Но если флаг в БД стоит, сбрасываем — приводим к согласованности.
+        if user_row.is_disabled:
+            user_row.is_disabled = False
+            logger.info("Сброшен is_disabled в БД для системного администратора (включён через .env)")
+        await db.commit()
+
+        token = create_session({
+            "username": username,
+            "user_dn": "cn=break-glass",
+            "is_admin": True,
+            "is_system_admin": True,
+        })
+        logger.info("Break-glass вход системного администратора: %s", username)
+
+        resp = RedirectResponse(url=_safe_next(next), status_code=302)
+        resp.set_cookie(
+            SESSION_COOKIE, token, max_age=MAX_AGE, httponly=True, samesite="lax",
+        )
+        return resp
+
+    # Обычные пользователи — через LDAP, как раньше
+    result = authenticate_ldap(username, password)
 
     if not result:
         return templates.TemplateResponse(
@@ -101,7 +142,7 @@ async def login_submit(
 
     user_row = await _sync_user(db, username)
 
-    # 👇 блокировка отключённых пользователей
+    # блокировка отключённых пользователей
     if user_row.is_disabled:
         await db.rollback()
         logger.warning("Отклонён вход отключённого пользователя: %s", username)
@@ -111,26 +152,22 @@ async def login_submit(
             status_code=403,
         )
 
-    is_system_admin = (username == ADMIN_USERNAME)
-
-    if is_system_admin:
-        is_admin = True
-    else:
-        in_local_admins = await _user_is_local_admin(db, username)
-        is_admin = bool(result["is_ldap_admin"] or in_local_admins)
-
+    in_local_admins = await _user_is_local_admin(db, username)
+    is_admin = bool(result["is_ldap_admin"] or in_local_admins)
     await db.commit()
 
     token = create_session({
         "username": username,
         "user_dn": result["user_dn"],
         "is_admin": is_admin,
-        "is_system_admin": is_system_admin,
+        "is_system_admin": False,
     })
-    logger.info("Вход %s (is_admin=%s, is_system_admin=%s)", username, is_admin, is_system_admin)
+    logger.info("Вход %s (is_admin=%s)", username, is_admin)
 
     resp = RedirectResponse(url=_safe_next(next), status_code=302)
-    resp.set_cookie(SESSION_COOKIE, token, max_age=MAX_AGE, httponly=True, samesite="lax")
+    resp.set_cookie(
+        SESSION_COOKIE, token, max_age=MAX_AGE, httponly=True, samesite="lax",
+    )
     return resp
 
 

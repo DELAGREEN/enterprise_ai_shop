@@ -50,6 +50,15 @@
 </div>
 {% endif %}
 
+{% if not system_admin_enabled %}
+<div class="warn-banner">
+    ⚠️ <b>Системный администратор отключён.</b>
+    В <code>.env</code> не задан <code>ADMIN_PASSWORD</code> — вход под
+    <b>{{ system_admin_username }}</b> невозможен.
+    Чтобы включить обратно, добавьте пароль в <code>.env</code> и перезапустите сервис.
+</div>
+{% endif %}
+
 <div class="card">
     <table>
         <thead>
@@ -68,7 +77,7 @@
                         <b>{{ u.username }}</b>
                         {% if u.is_system_admin %}
                             <span class="badge-sysadmin" title="Всегда администратор, группы не назначаются">
-                                системный
+                                Системный
                             </span>
                         {% endif %}
                         {% if u.is_disabled %}
@@ -95,14 +104,11 @@
                     </td>
                     <td>
                         {% if u.is_system_admin %}
-                            <button class="{% if u.is_disabled %}secondary{% else %}danger{% endif %}"
-                                    data-username="{{ u.username }}"
-                                    data-disable="{{ 'false' if u.is_disabled else 'true' }}"
-                                    {% if not u.is_disabled and other_admins_count == 0 %}disabled
-                                        title="Нельзя отключить: в системе нет других администраторов"{% endif %}
-                                    onclick="toggleSystemAdmin(this)">
-                                {% if u.is_disabled %}Включить{% else %}Отключить{% endif %}
-                            </button>
+                            {% if system_admin_enabled %}
+                                <span class="muted" style="font-size:.85rem;">управляется через .env</span>
+                            {% else %}
+                                <span class="badge-disabled">отключён через .env</span>
+                            {% endif %}
                         {% else %}
                             <button class="secondary"
                                     data-username="{{ u.username }}"
@@ -139,6 +145,8 @@
 
 {% block scripts %}
 <script>
+const ADMIN_USERNAME = {{ system_admin_username | tojson }};
+const SYSTEM_ADMIN_ENABLED = {{ system_admin_enabled | tojson }};
 const ALL_GROUPS = {{ groups | tojson }};
 
 const modal      = document.getElementById('userModal');
@@ -199,26 +207,5 @@ document.getElementById('userSave').addEventListener('click', async () => {
     } catch (e) { alert('Ошибка: ' + e.message); }
 });
 
-async function toggleSystemAdmin(btn) {
-    const username = btn.dataset.username;
-    const disable = btn.dataset.disable === 'true';
-    const action = disable ? 'отключить' : 'включить';
-    if (!confirm(`Вы уверены, что хотите ${action} системного администратора «${username}»?`)) return;
-
-    try {
-        const res = await fetch('/admin/user/disable', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({username, disabled: disable})
-        });
-        if (!res.ok) {
-            const err = await res.json().catch(() => ({}));
-            throw new Error(err.detail || ('HTTP ' + res.status));
-        }
-        location.reload();
-    } catch (e) {
-        alert('Ошибка: ' + e.message);
-    }
-}
 </script>
 {% endblock %}

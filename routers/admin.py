@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import (
     ADMIN_USERNAME,
+    SYSTEM_ADMIN_ENABLED,
     DATABASE_URL,
     LANGFLOW_API_KEY,
     LANGFLOW_URL,
@@ -400,6 +401,8 @@ async def admin_settings(request: Request, db: AsyncSession = Depends(get_db)):
                 "admin_username_fallback": ADMIN_USERNAME,
                 "tz_offset": LOCAL_TZ_OFFSET_HOURS,
                 "database_url": safe_db_url,
+                "system_admin_username": ADMIN_USERNAME,
+                "system_admin_enabled": SYSTEM_ADMIN_ENABLED,
             },
             "counts": {
                 "chats": chats_cnt,
@@ -558,7 +561,7 @@ async def admin_users(request: Request, db: AsyncSession = Depends(get_db)):
     g_res = await db.execute(select(Group).order_by(Group.is_system.desc(), Group.name))
     all_groups = list(g_res.scalars().all())
 
-    other_admins = await _count_other_admins(db)
+    other_admins = await _count_admins(db)
 
     items = [{
         "username": u.username,
@@ -578,6 +581,7 @@ async def admin_users(request: Request, db: AsyncSession = Depends(get_db)):
                        for g in all_groups],
             "system_admin_username": ADMIN_USERNAME,
             "other_admins_count": other_admins,
+            "system_admin_enabled": SYSTEM_ADMIN_ENABLED,
         },
     )
 
@@ -593,17 +597,40 @@ async def set_user_groups(
 ):
     _require_admin(request)
 
-    # системному администратору группы назначать нельзя
+    # Системному администратору группы назначать нельзя
     if payload.username == ADMIN_USERNAME:
         raise HTTPException(
             status_code=400,
             detail="Системному администратору нельзя назначать группы",
         )
-    
+
     u = await db.get(User, payload.username)
     if not u:
         raise HTTPException(status_code=404, detail="Пользователь не найден")
 
+    # Нельзя снять последнего администратора
+    was_res = await db.execute(
+        select(UserGroup).where(
+            UserGroup.username == payload.username,
+            UserGroup.group_id == "admins",
+        )
+    )
+    was_admin = was_res.scalar_one_or_none() is not None
+    will_be_admin = "admins" in payload.group_ids
+
+    if was_admin and not will_be_admin:
+        remaining = await _count_admins(db, exclude=payload.username)
+        if remaining == 0:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Нельзя снять с последнего администратора. "
+                    "Сначала назначьте другого администратора — иначе вы "
+                    "потеряете доступ к админке."
+                ),
+            )
+
+    # Проверяем, что все запрошенные группы существуют
     if payload.group_ids:
         res = await db.execute(select(Group.id).where(Group.id.in_(payload.group_ids)))
         existing = {gid for (gid,) in res.all()}
@@ -623,53 +650,24 @@ class UserDisablePayload(BaseModel):
     disabled: bool
 
 
-async def _count_other_admins(db: AsyncSession) -> int:
-    """Сколько пользователей (кроме системного админа) состоят в локальной группе admins."""
-    res = await db.execute(
-        select(UserGroup.username).where(
-            UserGroup.group_id == "admins",
-            UserGroup.username != ADMIN_USERNAME,
-        )
-    )
-    return len(res.all())
+async def _count_admins(db: AsyncSession, exclude: str | None = None) -> int:
+    """
+    Сколько пользователей состоит в группе admins.
+    Если задан exclude — исключает этого пользователя из подсчёта.
+    """
+    q = select(func.count()).select_from(UserGroup).where(UserGroup.group_id == "admins")
+    if exclude:
+        q = q.where(UserGroup.username != exclude)
+    return (await db.execute(q)).scalar() or 0
 
 
 @router.post("/user/disable")
-async def user_disable(
-    payload: UserDisablePayload,
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-):
-    user = _require_admin(request)
-
-    if payload.username != ADMIN_USERNAME:
-        raise HTTPException(
-            status_code=400,
-            detail="Отключать можно только системного администратора",
-        )
-
-    u = await db.get(User, payload.username)
-    if not u:
-        raise HTTPException(status_code=404, detail="Пользователь не найден")
-
-    # при отключении проверяем, что есть другой админ
-    if payload.disabled:
-        other = await _count_other_admins(db)
-        if other == 0:
-            raise HTTPException(
-                status_code=400,
-                detail="Нельзя отключить системного администратора: в системе нет других администраторов",
-            )
-
-    u.is_disabled = payload.disabled
-    await db.commit()
-    logger.info(
-        "Админ %s %s системного администратора %s",
-        user.get("username"),
-        "отключил" if payload.disabled else "включил",
-        payload.username,
+async def user_disable(request: Request):
+    _require_admin(request)
+    raise HTTPException(
+        status_code=400,
+        detail="Управление системным администратором выполняется через переменные окружения (.env)",
     )
-    return {"status": "ok", "is_disabled": u.is_disabled}
 
 # ---------- AGENT GROUPS ----------
 
