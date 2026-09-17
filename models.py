@@ -89,6 +89,7 @@ class User(Base):
     username = Column(String, primary_key=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     last_login = Column(DateTime, default=datetime.utcnow, nullable=False)
+    is_disabled = Column(Boolean, default=False, nullable=False)
 
 
 class Group(Base):

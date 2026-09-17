@@ -8,7 +8,7 @@
         display: inline-block; padding: 2px 8px; border-radius: 999px;
         font-size: .78rem; background: #e0e7ff; color: #3730a3; margin-right: 4px;
     }
-    .group-badge.system { background: #fde68a; color: #78350f; }
+    .group-badge.system { background: #fef3c7; color: #78350f; }
     .group-badge.none { background: #f3f4f6; color: #6b7280; }
     .modal { width: 480px; }
     .groups-list { display: flex; flex-direction: column; gap: 8px; max-height: 300px; overflow-y: auto; }
@@ -19,7 +19,36 @@
     }
     .groups-list label:hover { background: #f9fafb; }
     .groups-list input[type=checkbox] { width: 16px; height: 16px; }
+    .badge-sysadmin {
+    background: #fef3c7; color: #78350f; padding: 2px 8px;
+    border-radius: 999px; font-size: .75rem; margin-left: 4px;
+    }
+    .badge-disabled {
+        background: #fee2e2; color: #991b1b; padding: 2px 8px;
+        border-radius: 999px; font-size: .75rem; margin-left: 4px;
+    }
+    .user-row.disabled td { opacity: 0.6; }
+
+    .warn-banner {
+    background: #fef3c7;
+    border-left: 4px solid #f59e0b;
+    color: #78350f;
+    padding: 12px 16px;
+    border-radius: 8px;
+    margin-bottom: 16px;
+    font-size: .92rem;
+    line-height: 1.5;
+    }
 </style>
+
+{% if other_admins_count == 0 %}
+<div class="warn-banner">
+    ⚠️ <b>В системе нет администраторов.</b>
+    Пока не будет назначен хотя бы один «Администратор»,
+    системного администратора <b>{{ system_admin_username }}</b> отключить нельзя —
+    иначе вы потеряете доступ.
+</div>
+{% endif %}
 
 <div class="card">
     <table>
@@ -33,37 +62,62 @@
             </tr>
         </thead>
         <tbody>
-        {% for u in users %}
-            <tr>
-                <td><b>{{ u.username }}</b></td>
-                <td class="muted">{{ u.created_at | localtime }}</td>
-                <td class="muted">{{ u.last_login | localtime }}</td>
-                <td>
-                    {% set user_groups = [] %}
-                    {% for g in groups %}
-                        {% if g.id in u.group_ids %}
-                            {% set _ = user_groups.append(g) %}
-                            <span class="group-badge {% if g.is_system %}system{% endif %}">{{ g.name }}</span>
+            {% for u in users %}
+                <tr class="user-row {% if u.is_disabled %}disabled{% endif %}">
+                    <td>
+                        <b>{{ u.username }}</b>
+                        {% if u.is_system_admin %}
+                            <span class="badge-sysadmin" title="Всегда администратор, группы не назначаются">
+                                системный
+                            </span>
                         {% endif %}
-                    {% endfor %}
-                    {% if not user_groups %}
-                        <span class="group-badge none">без групп</span>
-                    {% endif %}
-                </td>
-                <td>
-                    <button class="secondary"
-                            data-username="{{ u.username }}"
-                            data-group-ids="{{ u.group_ids | join(',') }}"
-                            onclick="openUserModal(this)">👥 Группы</button>
-                </td>
-            </tr>
-        {% endfor %}
-        {% if not users %}
-            <tr><td colspan="5" class="muted" style="text-align:center; padding:20px;">
-                Ещё никто не входил в систему
-            </td></tr>
-        {% endif %}
-        </tbody>
+                        {% if u.is_disabled %}
+                            <span class="badge-disabled">отключён</span>
+                        {% endif %}
+                    </td>
+                    <td class="muted">{{ u.created_at | localtime }}</td>
+                    <td class="muted">{{ u.last_login | localtime }}</td>
+                    <td>
+                        {% if u.is_system_admin %}
+                            <span class="muted">—</span>
+                        {% else %}
+                            {% set user_groups = [] %}
+                            {% for g in groups %}
+                                {% if g.id in u.group_ids %}
+                                    {% set _ = user_groups.append(g) %}
+                                    <span class="group-badge {% if g.is_system %}system{% endif %}">{{ g.name }}</span>
+                                {% endif %}
+                            {% endfor %}
+                            {% if not user_groups %}
+                                <span class="group-badge none">без групп</span>
+                            {% endif %}
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if u.is_system_admin %}
+                            <button class="{% if u.is_disabled %}secondary{% else %}danger{% endif %}"
+                                    data-username="{{ u.username }}"
+                                    data-disable="{{ 'false' if u.is_disabled else 'true' }}"
+                                    {% if not u.is_disabled and other_admins_count == 0 %}disabled
+                                        title="Нельзя отключить: в системе нет других администраторов"{% endif %}
+                                    onclick="toggleSystemAdmin(this)">
+                                {% if u.is_disabled %}Включить{% else %}Отключить{% endif %}
+                            </button>
+                        {% else %}
+                            <button class="secondary"
+                                    data-username="{{ u.username }}"
+                                    data-group-ids="{{ u.group_ids | join(',') }}"
+                                    onclick="openUserModal(this)">👥 Группы</button>
+                        {% endif %}
+                    </td>
+                </tr>
+            {% endfor %}
+            {% if not users %}
+                <tr><td colspan="5" class="muted" style="text-align:center; padding:20px;">
+                    Ещё никто не входил в систему
+                </td></tr>
+            {% endif %}
+            </tbody>
     </table>
 </div>
 
@@ -144,5 +198,27 @@ document.getElementById('userSave').addEventListener('click', async () => {
         location.reload();
     } catch (e) { alert('Ошибка: ' + e.message); }
 });
+
+async function toggleSystemAdmin(btn) {
+    const username = btn.dataset.username;
+    const disable = btn.dataset.disable === 'true';
+    const action = disable ? 'отключить' : 'включить';
+    if (!confirm(`Вы уверены, что хотите ${action} системного администратора «${username}»?`)) return;
+
+    try {
+        const res = await fetch('/admin/user/disable', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({username, disabled: disable})
+        });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.detail || ('HTTP ' + res.status));
+        }
+        location.reload();
+    } catch (e) {
+        alert('Ошибка: ' + e.message);
+    }
+}
 </script>
 {% endblock %}

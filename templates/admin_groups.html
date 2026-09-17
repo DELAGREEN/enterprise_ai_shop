@@ -33,13 +33,9 @@
             <tr>
                 <td>
                     <b>{{ g.name }}</b>
-                    {% if g.is_system %}<span class="badge-system">системная</span>{% endif %}
-                </td>
-                <td>
-                    <b>{{ g.name }}</b>
                     {% if g.is_system %}
                         <span class="badge-system" title="Системная группа — изменить или удалить нельзя">
-                            🔒 системная
+                            Системная
                         </span>
                     {% endif %}
                 </td>
@@ -57,7 +53,7 @@
                             <button class="danger"
                                     onclick="deleteGroup('{{ g.id }}', '{{ g.name }}')">🗑</button>
                         {% else %}
-                            <span class="muted" style="font-size:.85rem;">системная</span>
+                            <span class="muted" style="font-size:.85rem;">Системная</span>
                         {% endif %}
                     </div>
                 </td>

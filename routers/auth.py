@@ -25,7 +25,7 @@ def _safe_next(next_url: str | None) -> str:
     return next_url
 
 
-async def _sync_user(db: AsyncSession, username: str) -> None:
+async def _sync_user(db: AsyncSession, username: str) -> User:
     """
     Авторегистрация: при первом входе создаёт User и добавляет в группу «users».
     При повторном — обновляет last_login.
@@ -34,8 +34,11 @@ async def _sync_user(db: AsyncSession, username: str) -> None:
     user = res.scalar_one_or_none()
 
     if user is None:
-        db.add(User(username=username))
-        db.add(UserGroup(username=username, group_id="users"))
+        user = User(username=username)
+        db.add(user)
+        # системному админу группу не назначаем
+        if username != ADMIN_USERNAME:
+            db.add(UserGroup(username=username, group_id="users"))
         logger.info("Зарегистрирован новый пользователь: %s", username)
     else:
         user.last_login = datetime.utcnow()
@@ -44,6 +47,7 @@ async def _sync_user(db: AsyncSession, username: str) -> None:
     # flush, чтобы FK-связи были видны в этой же транзакции;
     # commit делаем в вызывающем коде после всех операций.
     await db.flush()
+    return user
 
 
 async def _user_is_local_admin(db: AsyncSession, username: str) -> bool:
@@ -86,11 +90,7 @@ async def login_submit(
     # 2. Fallback-админ из .env
     if not result and username == ADMIN_USERNAME and password == ADMIN_PASSWORD:
         logger.info("Fallback-вход администратора: %s", username)
-        result = {
-            "username": username,
-            "user_dn": "cn=fallback",
-            "is_ldap_admin": True,
-        }
+        result = {"username": username, "user_dn": "cn=fallback", "is_ldap_admin": True}
 
     if not result:
         return templates.TemplateResponse(
@@ -99,28 +99,38 @@ async def login_submit(
             status_code=401,
         )
 
-    # 3. Синхронизация с БД — пользователь появляется в users + группа users
-    await _sync_user(db, username)
+    user_row = await _sync_user(db, username)
 
-    # 4. Если пользователь в локальной группе admins — получает админку
-    in_local_admins = await _user_is_local_admin(db, username)
+    # 👇 блокировка отключённых пользователей
+    if user_row.is_disabled:
+        await db.rollback()
+        logger.warning("Отклонён вход отключённого пользователя: %s", username)
+        return templates.TemplateResponse(
+            "login.html",
+            {"request": request, "error": "Учётная запись отключена", "next": next},
+            status_code=403,
+        )
 
-    # 5. Коммит — без него ничего не сохранится!
+    is_system_admin = (username == ADMIN_USERNAME)
+
+    if is_system_admin:
+        is_admin = True
+    else:
+        in_local_admins = await _user_is_local_admin(db, username)
+        is_admin = bool(result["is_ldap_admin"] or in_local_admins)
+
     await db.commit()
-
-    is_admin = bool(result["is_ldap_admin"] or in_local_admins)
 
     token = create_session({
         "username": username,
         "user_dn": result["user_dn"],
         "is_admin": is_admin,
+        "is_system_admin": is_system_admin,
     })
-    logger.info("Вход %s (is_admin=%s)", username, is_admin)
+    logger.info("Вход %s (is_admin=%s, is_system_admin=%s)", username, is_admin, is_system_admin)
 
     resp = RedirectResponse(url=_safe_next(next), status_code=302)
-    resp.set_cookie(
-        SESSION_COOKIE, token, max_age=MAX_AGE, httponly=True, samesite="lax",
-    )
+    resp.set_cookie(SESSION_COOKIE, token, max_age=MAX_AGE, httponly=True, samesite="lax")
     return resp
 
 
