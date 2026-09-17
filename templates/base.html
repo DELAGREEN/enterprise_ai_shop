@@ -28,12 +28,40 @@
         .muted { color: #6b7280; }
         .error { color: #dc2626; margin: 8px 0; }
         input[type=text], input[type=password] { padding: 8px; border: 1px solid #d1d5db; border-radius: 6px; width: 100%; }
+        header .logo {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            color: #fff;
+            text-decoration: none;
+            font-weight: bold;
+            font-size: 1.1rem;
+            margin-left: 0;         /* чтобы общий margin-left: 16px у ссылок не сдвигал */
+            opacity: 1;
+        }
+        header .logo:hover { opacity: 0.85; }
+
+        header .logo-icon { font-size: 1.2rem; line-height: 1; }
+        header .logo-text { white-space: nowrap; }
+
+        header .logo-img {
+            height: 28px;           /* подгоните под ваш логотип */
+            width: auto;
+            display: block;
+        }
     </style>
     {% block head %}{% endblock %}
 </head>
 <body>
 <header>
-    <a href="/" class="logo">Langflow Agents</a>
+    <a href="/" class="logo" aria-label="{{ APP_NAME }}">
+        {% if APP_LOGO_URL %}
+            <img src="{{ APP_LOGO_URL }}" alt="{{ APP_NAME }}" class="logo-img">
+        {% else %}
+            {% if APP_ICON %}<span class="logo-icon">{{ APP_ICON }}</span>{% endif %}
+            <span class="logo-text">{{ APP_NAME }}</span>
+        {% endif %}
+    </a>
     <nav>
         {% if user and user.is_admin %}
             <a href="/admin">Админка</a>
