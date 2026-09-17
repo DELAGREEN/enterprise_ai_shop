@@ -1,5 +1,6 @@
 import logging
 import uuid
+import importlib.metadata
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -334,6 +335,56 @@ async def admin_history(
 )
 
 
+_PACKAGES_CACHE: list[dict] | None = None
+
+# Пакеты, которые обычно «шумят» в runtime: инструменты сборки,
+# линтеры, тестовые фреймворки, транзитивные утилиты.
+_NOISY_EXACT = {
+    # build / packaging
+    "pip", "setuptools", "wheel", "build", "hatchling",
+    "flit", "flit-core", "poetry", "poetry-core", "twine",
+    "pyproject-hooks",
+    # dev / test
+    "pytest", "coverage", "mypy", "ruff", "black", "isort",
+    "flake8", "tox", "nox", "pre-commit", "virtualenv",
+    "distlib", "platformdirs", "filelock", "identify",
+    "nodeenv", "cfgv",
+}
+_NOISY_PREFIXES = ("pytest-", "mypy-", "flake8-", "black-", "isort-", "types-")
+
+
+def _is_noisy_package(name: str) -> bool:
+    low = name.lower().replace("_", "-")
+    if low in _NOISY_EXACT:
+        return True
+    return any(low.startswith(p) for p in _NOISY_PREFIXES)
+
+
+def _collect_packages() -> list[dict]:
+    """Список всех установленных пакетов: [{name, version, noisy}, ...]."""
+    global _PACKAGES_CACHE
+    if _PACKAGES_CACHE is not None:
+        return _PACKAGES_CACHE
+
+    seen: dict[str, str] = {}
+    for dist in importlib.metadata.distributions():
+        try:
+            name = dist.metadata["Name"]
+            if not name:
+                continue
+            seen[name] = dist.version or "—"
+        except Exception:
+            continue
+
+    packages = [
+        {"name": n, "version": v, "noisy": _is_noisy_package(n)}
+        for n, v in sorted(seen.items(), key=lambda x: x[0].lower())
+    ]
+    _PACKAGES_CACHE = packages
+    logger.info("Собрано пакетов окружения: %d", len(packages))
+    return packages
+
+
 # ---------- 3. Настройки / диагностика ----------
 
 @router.get("/settings", response_class=HTMLResponse)
@@ -384,6 +435,10 @@ async def admin_settings(request: Request, db: AsyncSession = Depends(get_db)):
     import sys
     import fastapi as _fastapi
 
+    packages = _collect_packages()
+    app_count = sum(1 for p in packages if not p["noisy"])
+    noisy_count = len(packages) - app_count
+
     return templates.TemplateResponse(
         "admin_settings.html",
         {
@@ -420,6 +475,9 @@ async def admin_settings(request: Request, db: AsyncSession = Depends(get_db)):
             "runtime": {
                 "python": sys.version.split()[0],
                 "fastapi": _fastapi.__version__,
+                "packages": packages, 
+                "app_count": app_count,
+                "noisy_count": noisy_count,
             },
         },
     )

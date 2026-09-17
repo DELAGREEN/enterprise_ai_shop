@@ -136,6 +136,45 @@
     border-radius: 999px; font-size: .75rem; margin-left: 4px;
     cursor: help;
     }
+    .runtime-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 12px;
+        margin-top: 8px;
+    }
+    .runtime-item {
+        background: #f9fafb;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        padding: 10px 12px;
+    }
+    .runtime-item .k {
+        font-size: .75rem; color: #6b7280;
+        text-transform: uppercase; letter-spacing: .5px;
+    }
+    .runtime-item .v {
+        font-size: 1rem; font-weight: 600; margin-top: 2px;
+    }
+
+    /* Модалка со списком пакетов */
+    .pkg-row {
+        display: flex; justify-content: space-between; align-items: center;
+        padding: 5px 10px;
+        border-bottom: 1px solid #f3f4f6;
+        font-size: .88rem;
+    }
+    .pkg-row:last-child { border-bottom: none; }
+    .pkg-row.noisy { color: #9ca3af; }
+    .pkg-row .pkg-name { font-family: monospace; }
+    .pkg-row .pkg-version { color: #6b7280; font-size: .82rem; }
+    .pkg-row.noisy .pkg-version { color: #cbd5e1; }
+    .pkg-badge-noisy {
+        background: #f3f4f6; color: #6b7280;
+        padding: 1px 6px; border-radius: 999px;
+        font-size: .68rem; margin-left: 6px; vertical-align: middle;
+    }
+    #pkgList::-webkit-scrollbar { width: 8px; }
+    #pkgList::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 4px; }
 </style>
 
 <h1>{% block admin_header %}Админка{% endblock %}</h1>

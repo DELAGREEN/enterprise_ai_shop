@@ -66,11 +66,63 @@
 </div>
 
 <div class="card">
-    <h3 style="margin-top:0;">Runtime</h3>
-    <table class="kv-table">
-        <tr><th>Python</th><td>{{ runtime.python }}</td></tr>
-        <tr><th>FastAPI</th><td>{{ runtime.fastapi }}</td></tr>
-    </table>
+    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+        <h3 style="margin:0;">Runtime</h3>
+        <button type="button" id="openPkgBtn" class="secondary">
+            Все библиотеки ({{ runtime.packages | length }})
+        </button>
+    </div>
+
+    <div class="runtime-grid">
+        <div class="runtime-item">
+            <div class="k">Python</div>
+            <div class="v">{{ runtime.python }}</div>
+        </div>
+        <div class="runtime-item">
+            <div class="k">FastAPI</div>
+            <div class="v">{{ runtime.fastapi }}</div>
+        </div>
+        <div class="runtime-item">
+            <div class="k">Пакетов (прикладных)</div>
+            <div class="v">{{ runtime.app_count }}</div>
+        </div>
+        <div class="runtime-item">
+            <div class="k">Пакетов (служебных)</div>
+            <div class="v">{{ runtime.noisy_count }}</div>
+        </div>
+        <div class="runtime-item">
+            <div class="k">Всего пакетов</div>
+            <div class="v">{{ runtime.packages | length }}</div>
+        </div>
+    </div>
+</div>
+
+<!-- Модалка со списком пакетов -->
+<div id="packagesModal" class="modal-backdrop" style="display:none;">
+    <div class="modal" style="width: 760px; max-width: 95vw; max-height: 85vh; display:flex; flex-direction:column;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+            <h3 style="margin:0;">Установленные библиотеки</h3>
+            <button type="button" class="secondary" id="pkgCloseX">✕</button>
+        </div>
+
+        <div style="display:flex; gap:12px; margin-bottom:10px; flex-wrap:wrap; align-items:center;">
+            <input type="text" id="pkgSearch" placeholder="Поиск по названию..."
+                   style="flex:1; min-width:180px; padding:7px 10px;">
+            <label style="display:flex; align-items:center; gap:6px; font-size:.88rem; white-space:nowrap;">
+                <input type="checkbox" id="pkgShowNoisy" checked> показывать служебные
+            </label>
+        </div>
+
+        <div id="pkgSummary" class="muted" style="font-size:.82rem; margin-bottom:6px;"></div>
+
+        <div id="pkgList"
+             style="overflow-y:auto; flex:1; border:1px solid #e5e7eb; border-radius:8px; padding:4px 0; min-height:200px;">
+        </div>
+
+        <div class="modal-actions" style="margin-top:12px;">
+            <button type="button" class="secondary" id="pkgClose">Закрыть</button>
+        </div>
+    </div>
 </div>
 
 <p class="muted" style="margin-top: 16px; font-size: .85rem;">
@@ -78,4 +130,82 @@
     применяются при старте приложения. Чтобы изменить, отредактируйте <code>.env</code>
     и перезапустите сервис.
 </p>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    /* ---------- Модалка со списком пакетов ---------- */
+const ALL_PACKAGES = {{ runtime.packages | tojson }};
+
+const pkgModal      = document.getElementById('packagesModal');
+const pkgListEl     = document.getElementById('pkgList');
+const pkgSearchEl   = document.getElementById('pkgSearch');
+const pkgShowNoisy  = document.getElementById('pkgShowNoisy');
+const pkgSummaryEl  = document.getElementById('pkgSummary');
+
+function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => (
+        {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]
+    ));
+}
+
+function renderPackages() {
+    const q = (pkgSearchEl.value || '').trim().toLowerCase();
+    const showNoisy = pkgShowNoisy.checked;
+
+    let shown = 0;
+    let shownApp = 0;
+    let shownNoisy = 0;
+
+    const html = [];
+    for (const p of ALL_PACKAGES) {
+        if (p.noisy && !showNoisy) continue;
+        if (q && !p.name.toLowerCase().includes(q)) continue;
+
+        if (p.noisy) shownNoisy++; else shownApp++;
+        shown++;
+
+        html.push(
+            '<div class="pkg-row' + (p.noisy ? ' noisy' : '') + '">' +
+                '<span class="pkg-name">' + escapeHtml(p.name) +
+                    (p.noisy ? '<span class="pkg-badge-noisy">служебная</span>' : '') +
+                '</span>' +
+                '<span class="pkg-version">' + escapeHtml(p.version) + '</span>' +
+            '</div>'
+        );
+    }
+
+    pkgListEl.innerHTML = shown
+        ? html.join('')
+        : '<div class="muted" style="text-align:center; padding:24px;">Ничего не найдено</div>';
+
+    pkgSummaryEl.textContent =
+        'Показано: ' + shown +
+        ' (прикладных: ' + shownApp +
+        ', служебных: ' + shownNoisy + ') из ' + ALL_PACKAGES.length;
+}
+
+function openPkgModal() {
+    pkgModal.style.display = 'flex';
+    pkgSearchEl.value = '';
+    pkgShowNoisy.checked = true;
+    renderPackages();
+    setTimeout(() => pkgSearchEl.focus(), 50);
+}
+
+function closePkgModal() {
+    pkgModal.style.display = 'none';
+}
+
+document.getElementById('openPkgBtn').addEventListener('click', openPkgModal);
+document.getElementById('pkgClose').addEventListener('click', closePkgModal);
+document.getElementById('pkgCloseX').addEventListener('click', closePkgModal);
+pkgModal.addEventListener('click', (e) => { if (e.target === pkgModal) closePkgModal(); });
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && pkgModal.style.display === 'flex') closePkgModal();
+});
+
+pkgSearchEl.addEventListener('input', renderPackages);
+pkgShowNoisy.addEventListener('change', renderPackages);
+</script>
 {% endblock %}
