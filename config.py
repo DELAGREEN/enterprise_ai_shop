@@ -17,6 +17,24 @@ DATABASE_URL = os.getenv(
     "DATABASE_URL",
     "postgresql+asyncpg://postgres:postgres@localhost:5432/langflow_admin",
 )
+# ---------- PostgreSQL connection pool ----------
+def _env_int(name: str, default: int, minimum: int, maximum: int) -> int:
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        raise RuntimeError(f"{name}: ожидалось целое число, получено {raw!r}")
+    if not (minimum <= value <= maximum):
+        raise RuntimeError(
+            f"{name}={value} вне диапазона [{minimum}, {maximum}]. "
+            f"Проверьте значение в .env."
+        )
+    return value
+
+DB_POOL_SIZE = _env_int("DB_POOL_SIZE", default=10, minimum=1, maximum=100)
+DB_MAX_OVERFLOW = _env_int("DB_MAX_OVERFLOW", default=20, minimum=0, maximum=200)
 
 # --- LDAP ---
 LDAP_SERVER = os.getenv("LDAP_SERVER", "localhost:389")

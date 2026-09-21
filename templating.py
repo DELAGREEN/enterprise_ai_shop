@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi.responses import HTMLResponse
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-from config import LOCAL_TZ_OFFSET_HOURS
+from config import LOCAL_TZ_OFFSET_HOURS, APP_ICON, APP_LOGO_URL, APP_NAME
 
 TEMPLATES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
 
@@ -33,14 +33,20 @@ def human_size(n: int | None) -> str:
 class Templates:
     def __init__(self, directory: str):
         self.env = Environment(
+            
             loader=FileSystemLoader(directory),
             autoescape=select_autoescape(["html", "xml"]),
             cache_size=0,
             auto_reload=True,
         )
-        # 👇 вот эта строка обязательна
+        # вот эта строка обязательна
         self.env.filters["localtime"] = localtime
         self.env.filters["human_size"] = human_size
+
+        # Глобалы брендинга — доступны во всех шаблонах без передачи в контекст
+        self.env.globals["APP_ICON"] = APP_ICON
+        self.env.globals["APP_NAME"] = APP_NAME
+        self.env.globals["APP_LOGO_URL"] = APP_LOGO_URL
 
     def TemplateResponse(
         self,
