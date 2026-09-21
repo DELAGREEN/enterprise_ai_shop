@@ -5,11 +5,26 @@ import httpx
 
 import config
 
+import time 
+
+from typing import Any
+
 logger = logging.getLogger(__name__)
 
+#-------- Кэш списка flow---------
+_FLOW_CACHE: dict[str, Any] = {"data": None, "ts": 0.0}
+_FLOW_TTL = 30.0 # секунды
+
+#-------- Regex для "Мышления" --------
 _THINK_PAIRED = re.compile(r"<think>(.*?)</think>", re.DOTALL | re.IGNORECASE)
 _THINK_CLOSE_ONLY = re.compile(r"^(.*?)</think>", re.DOTALL | re.IGNORECASE)
 
+
+def invalidate_flow_cache() -> None:
+    """Сбросить кэш списка flow (вызвать после publish/edit) в админке."""
+    _FLOW_CACHE["data"] = None
+    _FLOW_CACHE["ts"] = 0.0
+    logger.info("Кэш списка flow сброшен")
 
 class LangflowClient:
     def __init__(self, base_url: str | None = None, api_key: str | None = None):
@@ -24,19 +39,39 @@ class LangflowClient:
         return h
 
     async def get_all_flows(self) -> list:
+        now = time.monotonic()
+
+        # Свежий кэш - отдаём сразу
+        if _FLOW_CACHE["data"] is not None and (now - _FLOW_CACHE["ts"]) <_FLOW_TTL:
+            return _FLOW_CACHE["data"]
+        # Идём в Langflow
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
                 r = await client.get(f"{self.base_url}/flows/", headers=self.headers)
                 r.raise_for_status()
                 data = r.json()
                 if isinstance(data, list):
-                    return data
+                    flows = data
                 # некоторые версии Langflow заворачивают в {"flows": [...]}
-                if isinstance(data, dict) and "flows" in data:
-                    return data["flows"]
-                return []
+                elif isinstance(data, dict) and "flows" in data:
+                    flows = data["flows"]
+                else:
+                    flows = []
+
+                # Сохраняем в кэш
+                _FLOW_CACHE["data"] = flows
+                _FLOW_CACHE["ts"] = now
+                logger.debug("Кэш flow обновлён: %d записей", len(flows))
+                return flows
+            
         except Exception as e:
             logger.error("Не удалось получить список flow из Langflow: %s", e)
+
+            # Устаревший кэш лечше, чем пустой список
+            stale = _FLOW_CACHE["data"]
+            if stale is not None:
+                logger.warning("Отдаём устаревший кэш %d записей", len(stale))
+                return stale
             return []
 
     async def run_flow(self, flow_id: str, input_value: str, session_id: str | None = None) -> dict:

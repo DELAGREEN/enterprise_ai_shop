@@ -12,7 +12,7 @@ from session import get_current_user
 from routers import admin, auth, chat, public
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger(__name__)

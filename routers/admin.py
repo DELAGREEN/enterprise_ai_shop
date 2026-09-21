@@ -2,6 +2,7 @@ import logging
 import uuid
 import importlib.metadata
 from datetime import datetime, timedelta
+from langflow_client import LangflowClient, invalidate_flow_cache
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -173,6 +174,7 @@ async def publish(
     row.updated_at = now
 
     await db.commit()
+    invalidate_flow_cache() # сбрасываем кэш
     logger.info(
         "Админ %s: flow %s => %s",
         user.get("username"), payload.flow_id,
@@ -208,6 +210,7 @@ async def flow_edit(
 
     row.updated_at = datetime.utcnow()
     await db.commit()
+    invalidate_flow_cache() # сбрасываем кэш
     logger.info("Админ %s: flow %s отредактирован", user.get("username"), payload.flow_id)
     return {"status": "ok"}
 
@@ -762,4 +765,5 @@ async def agent_groups_set(
     for gid in payload.group_ids:
         db.add(AgentGroup(flow_id=payload.flow_id, group_id=gid))
     await db.commit()
+    invalidate_flow_cache() # сбросить кэш
     return {"status": "ok"}
