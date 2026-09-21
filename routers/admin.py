@@ -604,25 +604,53 @@ async def groups_delete(
 # ---------- USERS ----------
 
 @router.get("/users", response_class=HTMLResponse)
-async def admin_users(request: Request, db: AsyncSession = Depends(get_db)):
+async def admin_users(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    page: int = Query(1, ge=1),
+    per_page: int = Query(50, ge=10, le=500),
+    search: str = Query("", alias="q"),
+):
     user = get_current_user(request)
     if not user:
         return RedirectResponse(url="/auth/login", status_code=302)
     if not user.get("is_admin"):
         return RedirectResponse(url="/", status_code=302)
 
-    res = await db.execute(select(User).order_by(User.username))
+    # Базовый запрос с поиском
+    base_q = select(User)
+    if search.strip():
+        like = f"%{search.strip().lower()}%"
+        base_q = base_q.where(func.lower(User.username).like(like))
+
+    # Всего строк по фильтру
+    count_q = select(func.count()).select_from(base_q.subquery())
+    total = (await db.execute(count_q)).scalar() or 0
+
+    # Пагинация
+    pages = max(1, (total + per_page - 1) // per_page)
+    page = min(page, pages)
+    offset = (page - 1) * per_page
+
+    res = await db.execute(
+        base_q.order_by(User.username).offset(offset).limit(per_page)
+    )
     users = list(res.scalars().all())
 
-    ug_res = await db.execute(select(UserGroup))
+    # Группы текущей страницы (не всех пользователей — экономим память)
+    usernames = [u.username for u in users]
     memberships: dict[str, set[str]] = {}
-    for ug in ug_res.scalars().all():
-        memberships.setdefault(ug.username, set()).add(ug.group_id)
+    if usernames:
+        ug_res = await db.execute(
+            select(UserGroup).where(UserGroup.username.in_(usernames))
+        )
+        for ug in ug_res.scalars().all():
+            memberships.setdefault(ug.username, set()).add(ug.group_id)
 
     g_res = await db.execute(select(Group).order_by(Group.is_system.desc(), Group.name))
     all_groups = list(g_res.scalars().all())
 
-    other_admins = await _count_admins(db)
+    other_admins = await _count_admins(db, exclude=ADMIN_USERNAME)
 
     items = [{
         "username": u.username,
@@ -636,13 +664,22 @@ async def admin_users(request: Request, db: AsyncSession = Depends(get_db)):
     return templates.TemplateResponse(
         "admin_users.html",
         {
-            "request": request, "user": user, "active_menu": "users",
+            "request": request,
+            "user": user,
+            "active_menu": "users",
             "users": items,
             "groups": [{"id": g.id, "name": g.name, "is_system": g.is_system}
                        for g in all_groups],
             "system_admin_username": ADMIN_USERNAME,
             "other_admins_count": other_admins,
             "system_admin_enabled": SYSTEM_ADMIN_ENABLED,
+
+            # 👇 пагинация
+            "page": page,
+            "per_page": per_page,
+            "pages": pages,
+            "total": total,
+            "search": search,
         },
     )
 

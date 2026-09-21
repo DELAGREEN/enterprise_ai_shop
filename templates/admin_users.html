@@ -39,6 +39,45 @@
     font-size: .92rem;
     line-height: 1.5;
     }
+
+    .users-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+    }
+    .users-toolbar .search-box {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+    .users-toolbar input[type=text] {
+        padding: 6px 10px;
+        border: 1px solid #d1d5db;
+        border-radius: 6px;
+        min-width: 220px;
+    }
+    .pagination {
+        display: flex;
+        gap: 6px;
+        justify-content: center;
+        align-items: center;
+        margin-top: 18px;
+        flex-wrap: wrap;
+    }
+    .pagination a, .pagination span {
+        padding: 6px 12px;
+        border-radius: 6px;
+        text-decoration: none;
+        background: #fff;
+        color: #374151;
+        border: 1px solid #d1d5db;
+        font-size: .88rem;
+    }
+    .pagination .current { background: #2563eb; color: #fff; border-color: #2563eb; }
+    .pagination .disabled { opacity: .4; pointer-events: none; }
 </style>
 
 {% if other_admins_count == 0 %}
@@ -58,6 +97,22 @@
     Чтобы включить обратно, добавьте пароль в <code>.env</code> и перезапустите сервис.
 </div>
 {% endif %}
+<div class="users-toolbar">
+    <form method="get" action="/admin/users" class="search-box">
+        <input type="text" name="q" value="{{ search }}" placeholder="Поиск по логину...">
+        <input type="hidden" name="per_page" value="{{ per_page }}">
+        <button type="submit">Найти</button>
+        {% if search %}
+            <a href="/admin/users" style="text-decoration:none;">
+                <button type="button" class="secondary">Сбросить</button>
+            </a>
+        {% endif %}
+    </form>
+    <div class="muted" style="font-size:.85rem;">
+        Всего: <b>{{ total }}</b>
+        {% if total %} · стр. {{ page }} из {{ pages }}{% endif %}
+    </div>
+</div>
 
 <div class="card">
     <table>
@@ -126,6 +181,49 @@
             </tbody>
     </table>
 </div>
+
+{# ---------- Пагинация ---------- #}
+{% if pages > 1 %}
+{% macro page_url(p) -%}
+/admin/users?page={{ p }}&per_page={{ per_page }}
+{%- if search %}&q={{ search }}{% endif %}
+{%- endmacro %}
+
+<div class="pagination">
+    {% if page > 1 %}
+        <a href="{{ page_url(page - 1) }}">← Назад</a>
+    {% else %}
+        <span class="disabled">← Назад</span>
+    {% endif %}
+
+    {% set start = [1, page - 2] | max %}
+    {% set end = [pages, page + 2] | min %}
+
+    {% if start > 1 %}
+        <a href="{{ page_url(1) }}">1</a>
+        {% if start > 2 %}<span>…</span>{% endif %}
+    {% endif %}
+
+    {% for p in range(start, end + 1) %}
+        {% if p == page %}
+            <span class="current">{{ p }}</span>
+        {% else %}
+            <a href="{{ page_url(p) }}">{{ p }}</a>
+        {% endif %}
+    {% endfor %}
+
+    {% if end < pages %}
+        {% if end < pages - 1 %}<span>…</span>{% endif %}
+        <a href="{{ page_url(pages) }}">{{ pages }}</a>
+    {% endif %}
+
+    {% if page < pages %}
+        <a href="{{ page_url(page + 1) }}">Вперёд →</a>
+    {% else %}
+        <span class="disabled">Вперёд →</span>
+    {% endif %}
+</div>
+{% endif %}
 
 <div id="userModal" class="modal-backdrop" style="display:none;">
     <div class="modal">
