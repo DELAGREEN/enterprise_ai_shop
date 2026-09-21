@@ -13,6 +13,8 @@ from models import User, UserGroup
 from session import MAX_AGE, SESSION_COOKIE, create_session, get_current_user
 from templating import templates
 
+from starlette.concurrency import run_in_threadpool
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
@@ -131,7 +133,7 @@ async def login_submit(
         return resp
 
     # Обычные пользователи — через LDAP, как раньше
-    result = authenticate_ldap(username, password)
+    result = await run_in_threadpool(authenticate_ldap, username, password)
 
     if not result:
         return templates.TemplateResponse(
