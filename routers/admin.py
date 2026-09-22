@@ -608,7 +608,7 @@ async def admin_users(
     request: Request,
     db: AsyncSession = Depends(get_db),
     page: int = Query(1, ge=1),
-    per_page: int = Query(50, ge=10, le=500),
+    per_page: int = Query(10, ge=10, le=500),
     search: str = Query("", alias="q"),
 ):
     user = get_current_user(request)
@@ -674,7 +674,7 @@ async def admin_users(
             "other_admins_count": other_admins,
             "system_admin_enabled": SYSTEM_ADMIN_ENABLED,
 
-            # 👇 пагинация
+            # пагинация
             "page": page,
             "per_page": per_page,
             "pages": pages,

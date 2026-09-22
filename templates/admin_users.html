@@ -97,6 +97,7 @@
     Чтобы включить обратно, добавьте пароль в <code>.env</code> и перезапустите сервис.
 </div>
 {% endif %}
+
 <div class="users-toolbar">
     <form method="get" action="/admin/users" class="search-box">
         <input type="text" name="q" value="{{ search }}" placeholder="Поиск по логину...">
@@ -108,10 +109,23 @@
             </a>
         {% endif %}
     </form>
+
     <div class="muted" style="font-size:.85rem;">
         Всего: <b>{{ total }}</b>
         {% if total %} · стр. {{ page }} из {{ pages }}{% endif %}
     </div>
+
+    <form method="get" action="/admin/users" class="search-box" style="margin-left:auto;">
+    <input type="hidden" name="q" value="{{ search }}">
+    <label>На странице:
+        <select name="per_page" onchange="this.form.submit()"
+                style="padding: 6px 10px; border-radius: 6px; border: 1px solid #d1d5db;">
+            {% for n in [10, 25, 50, 100, 250, 500] %}
+                <option value="{{ n }}" {% if per_page == n %}selected{% endif %}>{{ n }}</option>
+            {% endfor %}
+        </select>
+    </label>
+</form>
 </div>
 
 <div class="card">
