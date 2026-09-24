@@ -2,6 +2,7 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy import select, text
 
@@ -9,7 +10,7 @@ from database import AsyncSessionLocal, Base, engine
 from models import Group, User
 
 from session import get_current_user
-from routers import admin, auth, chat, public
+from routers import admin, auth, chat, public, embed
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -66,7 +67,7 @@ PUBLIC_PATHS = {"/auth/login", "/auth/logout", "/favicon.ico"}
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
-    if path in PUBLIC_PATHS or path.startswith("/static"):
+    if path in PUBLIC_PATHS or path.startswith("/static") or path.startswith("/embed/"):
         return await call_next(request)
 
     user = get_current_user(request)
@@ -91,3 +92,5 @@ app.include_router(public.router)
 app.include_router(auth.router)
 app.include_router(admin.router)
 app.include_router(chat.router)
+app.include_router(embed.router, tags=["embed"])
+app.mount("/static", StaticFiles(directory="static"), name="static")

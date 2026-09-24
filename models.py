@@ -120,3 +120,27 @@ class AgentGroup(Base):
     group_id = Column(
         String, ForeignKey("groups.id", ondelete="CASCADE"), primary_key=True
     )
+
+
+class EmbedIntegration(Base):
+    """Интеграция для встраивания агента на сторонний портал."""
+    __tablename__ = "embed_integrations"
+
+    id = Column(String, primary_key=True)              # публичный id (uuid hex)
+    name = Column(String, nullable=False)              # «Портал Acme», «Сайт поддержки»
+    flow_id = Column(String, nullable=False, index=True)
+    secret = Column(String, nullable=False)            # HMAC-секрет
+    allowed_origins = Column(Text, nullable=True)      # "https://acme.com,https://portal.acme.com"
+    created_by = Column(String, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    last_used_at = Column(DateTime, nullable=True)
+    is_active = Column(Boolean, default=True, nullable=False)
+
+
+class EmbedNonce(Base):
+    """Использованные nonce — защита от replay-атак."""
+    __tablename__ = "embed_nonces"
+
+    nonce = Column(String, primary_key=True)
+    integration_id = Column(String, nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)

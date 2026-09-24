@@ -3,12 +3,14 @@ import uuid
 import importlib.metadata
 from datetime import datetime, timedelta
 from langflow_client import LangflowClient, invalidate_flow_cache
+from embed_auth import generate_secret
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 from sqlalchemy import func, select, text, delete
 from sqlalchemy.ext.asyncio import AsyncSession
+
 
 from config import (
     ADMIN_USERNAME,
@@ -22,6 +24,7 @@ from config import (
     LDAP_USE_SSL,
     LDAP_USER_ATTR,
     LOCAL_TZ_OFFSET_HOURS,
+    PUBLIC_BASE_URL
 )
 from database import get_db
 from langflow_client import LangflowClient
@@ -35,6 +38,7 @@ from models import (
     LLMRequestLog,
     User,
     UserGroup,
+    EmbedIntegration,
 )
 from session import get_current_user
 from templating import templates
@@ -803,4 +807,105 @@ async def agent_groups_set(
         db.add(AgentGroup(flow_id=payload.flow_id, group_id=gid))
     await db.commit()
     invalidate_flow_cache() # сбросить кэш
+    return {"status": "ok"}
+
+# ------------ EMBED ----------
+@router.get("/embeds", response_class=HTMLResponse)
+async def admin_embeds(request: Request, db: AsyncSession = Depends(get_db)):
+    user = get_current_user(request)
+    if not user or not user.get("is_admin"):
+        return RedirectResponse(url="/" if user else "/auth/login", status_code=302)
+
+    res = await db.execute(
+        select(EmbedIntegration).order_by(EmbedIntegration.created_at.desc())
+    )
+    items = list(res.scalars().all())
+
+    # Список flow для селекта — только опубликованные
+    pub_res = await db.execute(
+        select(FlowPublication.flow_id).where(FlowPublication.is_published.is_(True))
+    )
+    published_ids = [fid for (fid,) in pub_res.all()]
+
+    client = LangflowClient()
+    flows = await client.get_all_flows()
+    flow_options = [
+        {"id": f.get("id"), "name": f.get("name") or f.get("id")}
+        for f in flows if f.get("id") in published_ids
+    ]
+
+    return templates.TemplateResponse(
+        "admin_embeds.html",
+        {
+            "request": request, "user": user, "active_menu": "embeds",
+            "integrations": items,
+            "flow_options": flow_options,
+            "base_url": PUBLIC_BASE_URL,
+        },
+    )
+
+
+class EmbedCreatePayload(BaseModel):
+    name: str
+    flow_id: str
+    allowed_origins: str | None = None
+
+
+@router.post("/embeds/create")
+async def embeds_create(
+    payload: EmbedCreatePayload, request: Request, db: AsyncSession = Depends(get_db)
+):
+    user = _require_admin(request)
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Пустое имя")
+
+    integ = EmbedIntegration(
+        id=uuid.uuid4().hex,
+        name=name,
+        flow_id=payload.flow_id,
+        secret=generate_secret(),
+        allowed_origins=(payload.allowed_origins or "").strip() or None,
+        created_by=user.get("username"),
+    )
+    db.add(integ)
+    await db.commit()
+
+    logger.info("Админ %s создал embed-интеграцию %s (%s)", user.get("username"), integ.id, name)
+    # Секрет возвращаем ОДИН раз — больше его нигде не покажем
+    return {"status": "ok", "id": integ.id, "secret": integ.secret}
+
+
+class EmbedTogglePayload(BaseModel):
+    id: str
+    is_active: bool
+
+
+@router.post("/embeds/toggle")
+async def embeds_toggle(
+    payload: EmbedTogglePayload, request: Request, db: AsyncSession = Depends(get_db)
+):
+    _require_admin(request)
+    integ = await db.get(EmbedIntegration, payload.id)
+    if not integ:
+        raise HTTPException(status_code=404, detail="Интеграция не найдена")
+    integ.is_active = payload.is_active
+    await db.commit()
+    return {"status": "ok"}
+
+
+class EmbedDeletePayload(BaseModel):
+    id: str
+
+
+@router.post("/embeds/delete")
+async def embeds_delete(
+    payload: EmbedDeletePayload, request: Request, db: AsyncSession = Depends(get_db)
+):
+    _require_admin(request)
+    integ = await db.get(EmbedIntegration, payload.id)
+    if not integ:
+        raise HTTPException(status_code=404, detail="Интеграция не найдена")
+    await db.delete(integ)
+    await db.commit()
     return {"status": "ok"}
