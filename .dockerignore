@@ -1,0 +1,25 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+venv
+.venv
+env
+
+# Данные БД (root-owned, в образ не нужны)
+docker/ai_shop_db
+docker/pgdata
+docker/data
+
+# Прочее
+.env
+*.log
+tests/
+AI_REQ/
+roadmap.md
+README.md

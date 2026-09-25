@@ -1,0 +1,21 @@
+version: "3.8"
+
+services:
+  enterprise-ai-shop:
+    build:
+    # Контекст сборки – корень проекта (root)
+      context: ..
+      dockerfile: docker/Dockerfile
+      #image: 
+    container_name: enterprise-ai-shop
+    mem_limit: 2g
+    #user: "${UID}:${GID}"
+    # (опционально) устанавливаем рабочую директорию внутри контейнера
+    working_dir: /app
+    env_file:
+      - ../.env 
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+    network_mode: host
+    restart: unless-stopped
