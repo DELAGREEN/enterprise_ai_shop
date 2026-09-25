@@ -1,0 +1,10 @@
+chroma_data
+chroma_db
+faiss_db
+keycloak_data
+langflow_data
+langflow_uploads
+ldap
+pgvector_data
+qdrant_storage
+auth_proxy

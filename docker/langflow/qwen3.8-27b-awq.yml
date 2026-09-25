@@ -1,0 +1,72 @@
+version: '3.8'
+
+services:  
+  vllm-generate:
+  #FROM RTX 4090(24g)    
+    image: vllm/vllm-openai:latest
+    container_name: vllm-generate
+    #ports:
+    #  - "8081:8081"
+    restart: always
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    environment:
+      - TZ=Europe/Moscow                    # Таймзона
+      - NODE_NAME=generate
+      - TRANSFORMERS_OFFLINE=0              # Если 0 качает модель из интернета
+      - HF_HUB_DISABLE_XET=1
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /opt/.cache/huggingface:/root/.cache/huggingface
+    command: 
+            - "--model"
+            - "cyankiwi/Qwen3.8-27B-AWQ-INT4"
+            - "--cpu-offload-gb"           # На Desktop не использовать
+            - "4"                         # Увеличивает оперативную память выделяемую для модели(предположительно хорошо работает только на серверах) 
+            - "--host"
+            - "0.0.0.0"
+            - "--port"
+            - "8081"
+            #- "--dtype"
+            #- "bfloat16"
+            #- "bfloat8"  
+            #- "--kv-offloading-backend" 
+            #- "native" 
+            #- "--kv-offloading-size" 
+            #- "4"
+            - "--kv-cache-dtype" 
+            - "fp8"                  
+            - "--enforce-eager"             # СПАСИТЕЛЬНЫЙ ФЛАГ: отключает компилятор графов
+            - "--gpu-memory-utilization"
+            - "0.90"
+            - "--max-model-len"
+            - "4096"                        # Длина контекста
+            - "--enable-prefix-caching"
+            - "--mamba-cache-mode"
+            - "align"
+            - "--max-num-seqs"
+            - "128"                         # Количество одномоментных запросов
+            - "--enable-auto-tool-choice" 
+            - "--tool-call-parser" 
+            - "qwen3_xml"
+            - "--reasoning-parser"
+            - "qwen3"
+            #- "llm_planning"
+            #- "hermes"                      # Внешний вид ответа от модели, по факту работает только hermes(microsoft) 
+    networks:
+        - langflow_langflow-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]   # или /health
+      interval: 30s                         # проверка каждые 30 секунд
+      timeout: 10s                          # таймаут на каждый запрос
+      retries: 10                           # 10 неудачных проверок подряд считаются failure
+      start_period: 180s                    # 3 минуты на загрузку модели (увеличьте, если нужно) 
+
+networks:
+  langflow_langflow-network:
+    external: true

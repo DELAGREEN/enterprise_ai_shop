@@ -1,0 +1,151 @@
+version: '3.8'
+
+volumes:
+  langflow_db:
+  langflow_data:
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: langflow-postgres
+    restart: always
+    environment:
+      - POSTGRES_USER=langflow
+      - POSTGRES_PASSWORD=langflow_password
+      - POSTGRES_DB=langflow
+      - TZ=Europe/Moscow 
+    volumes:
+      - langflow_db:/var/lib/postgresql/data
+      - /etc/localtime:/etc/localtime:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langflow"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - langflow-network
+
+  langflow:
+    image: langflowai/langflow:latest
+    container_name: langflow
+    restart: always
+    ports:
+      - "7860:7860"                    # внешний порт → внутренний
+    environment:
+      # Подключение к PostgreSQL
+      - LANGFLOW_DATABASE_URL=postgresql://langflow:langflow_password@postgres:5432/langflow
+      # Настройки суперпользователя (логин по умолчанию: langflow)
+      # - LANGFLOW_SUPERUSER
+      - LANGFLOW_SUPERUSER_PASSWORD=admin_password   # 🔒 смени на свой
+      - LANGFLOW_AUTO_LOGIN=false      # не входить автоматически
+      #Белый список защиты от SSR атак
+      - LANGFLOW_SSRF_ALLOWED_HOSTS=host.docker.internal
+      #A2A
+      - LANGFLOW_A2A_ENABLED=true
+      - LANGFLOW_CORS_ALLOW_ORIGINS=*   # разрешить все источники (небезопасно для продакшена)
+      # или конкретно ваш домен:
+      # - LANGFLOW_CORS_ALLOW_ORIGINS=http://192.168.0.169:7860,https://ваш-домен.ru
+      
+      # Таймзона
+      - TZ=Europe/Moscow
+    volumes:
+      - langflow_data:/app/.langflow   # для хранения файлов flows (если нужны)
+      - /etc/localtime:/etc/localtime:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - langflow-network
+    extra_hosts: 
+    # http://host.docker.internal:11434                             
+    - "host.docker.internal:host-gateway"       # ← магическая строка
+
+#  vllm-embedding:
+#    volumes:
+#      - /opt/.cache/huggingface:/root/.cache/huggingface
+#    image: vllm/vllm-openai:v0.8.4
+#    ports:
+#      - "8080:8080"
+#    restart: always
+#    deploy:
+#      resources:
+#        reservations:
+#          devices:
+#            - driver: nvidia
+#              count: 1
+#              capabilities: [gpu]
+#    environment:
+#      - TRANSFORMERS_OFFLINE=0 #Если 0 лезет в интернет качать модели по пути в volumes
+#    entrypoint: ["python3", "-m", "vllm.entrypoints.openai.api_server", "--model", "deepvk/USER-bge-m3", "--host", "0.0.0.0", "--port", "8080", "--task", "embedding" ]
+#    networks:
+#      - langflow-network
+#  vllm-embedding:
+#    volumes:
+#      - /opt/.cache/huggingface:/root/.cache/huggingface
+#    image: vllm/vllm-openai:v0.8.4
+#    ports:
+#      - "8080:8080"
+#    restart: always
+#    deploy:
+#      resources:
+#        reservations:
+#          devices:
+#            - driver: nvidia
+#              count: 1
+#              capabilities: [gpu]
+#    environment:
+#      - TRANSFORMERS_OFFLINE=1
+#    entrypoint: ["python3", "-m", "vllm.entrypoints.openai.api_server", "--model", "deepvk/USER-bge-m3", "--host", "0.0.0.0", "--port", "8080", "--task", "embedding" ]
+  vllm-generate:    
+    image: vllm/vllm-openai:v0.8.3
+    ports:
+      - "8081:8081"
+    restart: always
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    environment:
+      - TZ=Europe/Moscow  # Таймзона
+      - NODE_NAME=generate
+      - TRANSFORMERS_OFFLINE=0
+      - HF_HUB_DISABLE_XET=1
+      #- VLLM_SWAP_SPACE=20
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /opt/.cache/huggingface:/root/.cache/huggingface
+    command: 
+            - "--model"
+            - "Qwen/Qwen3-32B-AWQ"
+            - "--host"
+            - "0.0.0.0"
+            - "--port"
+            - "8081"
+            - "--gpu-memory-utilization"
+            - "0.93"
+            - "--tensor-parallel-size"
+            - "1"
+            - "--max-model-len"
+            - "4096"
+            - "--kv-cache-dtype"
+            - "fp8"
+            - "--enable-auto-tool-choice"
+            - "--tool-call-parser"
+            - "hermes"
+            - "--dtype"
+            - "half"
+            - "--max-num-seqs"
+            - "32"
+            - "--max-num-batched-tokens"
+            - "4096"
+            - "--enforce-eager"
+    networks:
+        - langflow-network
+
+networks:
+  langflow-network:
+    driver: bridge
+    

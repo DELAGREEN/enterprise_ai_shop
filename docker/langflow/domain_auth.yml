@@ -1,0 +1,88 @@
+version: '3.8'
+
+services:
+  ldap:
+    image: osixia/openldap:1.5.0
+    container_name: ldap
+    environment:
+      - TZ=Europe/Moscow 
+      - LDAP_ORGANISATION=MyOrg
+      - LDAP_DOMAIN=example.com
+      - LDAP_ADMIN_PASSWORD=adminpass
+      - LDAP_CONFIG_PASSWORD=adminpass
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      #- ./ldap/init.ldif:/container/service/slapd/assets/config/bootstrap/ldif/init.ldif
+    ports:
+      - "389:389"
+      - "636:636"
+    command: --loglevel debug
+    networks:
+      - langflow-network
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0.5
+    container_name: keycloak
+    environment:
+      - TZ=Europe/Moscow 
+      - KEYCLOAK_ADMIN=admin
+      - KEYCLOAK_ADMIN_PASSWORD=admin
+      #- KC_DB=dev-mem
+      - KC_HTTP_PORT=8080
+      - KC_HOSTNAME=localhost
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - ./keycloak_data:/opt/keycloak/data
+    depends_on:
+      - ldap
+    command: ["start-dev"]
+    ports:
+      - "8080:8080"
+    networks:
+      - langflow-network
+
+#  nginx:
+#    image: nginx:latest
+#    container_name: nginx-proxy
+#    ports:
+#      - "80:80"
+#    volumes:
+#      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+#    depends_on:
+#      - keycloak
+#    networks:
+#      - langflow-network
+
+  oauth2-proxy:
+    image: quay.io/oauth2-proxy/oauth2-proxy:latest
+    container_name: oauth2-proxy
+    restart: always
+    network_mode: host
+    environment:
+      - TZ=Europe/Moscow 
+      - OAUTH2_PROXY_PROVIDER=oidc
+      - OAUTH2_PROXY_OIDC_ISSUER_URL=http://localhost:8080/realms/langflow   # совпадает с Keycloak
+      - OAUTH2_PROXY_CLIENT_ID=langflow-app
+      - OAUTH2_PROXY_CLIENT_SECRET=XmDAsoUB8XX6ymOScb444WM1ev3yU37X
+      - OAUTH2_PROXY_OIDC_EMAIL_CLAIM=email
+      - OAUTH2_PROXY_EMAIL_VERIFIED=true
+      - OAUTH2_PROXY_OIDC_GROUPS_CLAIM=groups
+      - OAUTH2_PROXY_COOKIE_SECRET=12345678901234567890123456789012   # 32 символа
+      - OAUTH2_PROXY_COOKIE_DOMAIN=localhost
+      - OAUTH2_PROXY_HTTP_ADDRESS=0.0.0.0:4180   # слушаем на всех интерфейсах
+      - OAUTH2_PROXY_UPSTREAMS=http://localhost:7860   # Langflow на хосте (порт 7860 проброшен)
+      - OAUTH2_PROXY_EMAIL_DOMAINS=*
+      - OAUTH2_PROXY_REDIRECT_URL=http://localhost:4180/oauth2/callback
+      - OAUTH2_PROXY_SCOPE=openid profile email
+      - OAUTH2_PROXY_SKIP_PROVIDER_BUTTON=true
+      - OAUTH2_PROXY_PASS_ACCESS_TOKEN=true
+      - OAUTH2_PROXY_PASS_USER_HEADERS=true
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+    depends_on:
+      - keycloak
+
+networks:
+  langflow-network:
+    name: langflow_langflow-network    # явно указываем имя сети
+    external: true    

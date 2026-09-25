@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  vllm-embedding:
+    volumes:
+      - /opt/.cache/huggingface:/root/.cache/huggingface
+    image: vllm/vllm-openai:v0.8.4
+    ports:
+      - "8082:8080"
+    restart: always
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    environment:
+      - TRANSFORMERS_OFFLINE=0 #Если 0 лезет в интернет качать модели по пути в volumes
+    entrypoint: ["python3", "-m", "vllm.entrypoints.openai.api_server", "--model", "Qwen/Qwen3-Embedding-0.6B", "--host", "0.0.0.0", "--port", "8080"]
+
+    networks:
+      - langflow-network
+
+networks:
+  langflow-network:
+    driver: bridge
