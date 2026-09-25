@@ -87,5 +87,5 @@ cp .env.example .env
 # отредактируйте .env под своё окружение
 
 # 4. Запуск
-uvicorn app:app --host 0.0.0.0 --port 5001
+uvicorn app:app --host 0.0.0.0 --port 5001 --reload --workers 4
 ```
