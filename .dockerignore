@@ -15,6 +15,16 @@ env
 docker/ai_shop_db
 docker/pgdata
 docker/data
+docker/chroma_data
+docker/chroma_db
+docker/faiss_db 
+docker/langflow 
+docker/langflow_data 
+docker/langflow_uploads 
+docker/nginx 
+docker/pgvector_data 
+docker/qdrant_storage
+docker/langflow_db
 
 # Прочее
 .env
@@ -23,3 +33,4 @@ tests/
 AI_REQ/
 roadmap.md
 README.md
+docker/langflow/

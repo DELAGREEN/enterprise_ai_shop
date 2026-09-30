@@ -2,3 +2,7 @@
 *pycache*
 .env
 ai_shop_db
+langflow*db
+*data
+*db
+*storage
