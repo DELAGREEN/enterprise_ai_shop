@@ -28,7 +28,7 @@ RUN groupadd -r appuser && useradd -r -g appuser appuser
 WORKDIR /app
 
 # Копируем requirements.txt ДО переключения пользователя
-COPY requirements.txt .
+COPY ../requirements.txt .
 
 # Создаем виртуальное окружение и устанавливаем зависимости как ROOT
 RUN python3 -m venv venv && \
@@ -45,14 +45,20 @@ RUN python3 -m venv venv && \
 RUN chmod -R a+rw /app
 
 # Копируем остальные файлы
-COPY  *.py .
-COPY routers/ routers/
-COPY static/ static/
-COPY templates/ templates/
+COPY  ./*.py .
+COPY ./routers/ routers/
+COPY ./static/ static/
+COPY ./templates/ templates/
 
 #Переключаемся на пользователя
 USER appuser
 
 # Запускаем приложение
-CMD ["venv/bin/python", "-m", "uvicorn", "app:app", "--host", "0.0.0.0", "--port", "5001", "--workers", "4"]
+CMD ["venv/bin/python", "-m", \
+     "uvicorn", "app:app", \
+     "--host", "0.0.0.0", \
+     "--port", "5001", \
+     "--proxy-headers", \
+     "--forwarded-allow-ips", "*", \
+    "--workers", "4"]
 #CMD ["tail", "-f", "/dev/null"]
