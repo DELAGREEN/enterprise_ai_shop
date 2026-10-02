@@ -10,7 +10,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import config
-from models import EmbedIntegration, EmbedNonce
+from models import Integration, EmbedNonce
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +65,7 @@ async def validate_embed_token(
     signature: str,
     *,
     consume_nonce: bool = True,
-) -> EmbedIntegration:
+) -> Integration:
     """
     Полная валидация: подпись + срок + nonce + origin + интеграция активна.
 

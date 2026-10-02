@@ -1,0 +1,160 @@
+{% extends "admin_base.html" %}
+{% block admin_title %}Интеграции{% endblock %}
+{% block admin_header %}API и Embed интеграции{% endblock %}
+
+{% block admin_content %}
+<div style="margin-bottom: 16px;">
+    <button id="createBtn">+ Создать интеграцию</button>
+</div>
+
+<div class="card">
+    <table>
+        <thead>
+            <tr>
+                <th>Название</th>
+                <th>Flow</th>
+                <th>Способы входа</th>
+                <th>API Key</th>
+                <th>Статус</th>
+                <th>Действия</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for i in integrations %}
+            <tr>
+                <td><b>{{ i.name }}</b><br><code class="muted">{{ i.id[:12] }}…</code></td>
+                <td><code>{{ i.flow_id[:8] }}…</code></td>
+                <td>
+                    {% for m in i.auth_methods_list %}
+                        <span class="badge custom">{{ m }}</span>
+                    {% endfor %}
+                </td>
+                <td>
+                    {% if i.api_key_prefix %}
+                        <code>{{ i.api_key_prefix }}</code>
+                    {% else %}
+                        <span class="muted">—</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if i.is_active %}
+                        <span class="badge ok">активна</span>
+                    {% else %}
+                        <span class="badge no">отключена</span>
+                    {% endif %}
+                </td>
+                <td>
+                    <button onclick="toggle('{{ i.id }}', {{ 'false' if i.is_active else 'true' }})">
+                        {% if i.is_active %}⏸{% else %}▶{% endif %}
+                    </button>
+                    <button class="danger" onclick="del('{{ i.id }}', '{{ i.name }}')">🗑</button>
+                </td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+{# Модалка создания #}
+<div id="createModal" class="modal-backdrop" style="display:none;">
+    <div class="modal" style="width: 600px;">
+        <h3>Новая интеграция</h3>
+
+        <div class="field">
+            <label>Название</label>
+            <input type="text" id="fName" placeholder="Мобильное приложение / Портал Acme">
+        </div>
+
+        <div class="field">
+            <label>Агент (flow)</label>
+            <select id="fFlow">
+                <option value="">— выберите —</option>
+                {% for f in flow_options %}
+                <option value="{{ f.id }}">{{ f.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <div class="field">
+            <label>Способы аутентификации</label>
+            <div style="display:flex; gap:14px; flex-wrap:wrap; margin-top:6px;">
+                <label><input type="checkbox" name="auth" value="api_key" checked> 🔑 API-ключ</label>
+                <label><input type="checkbox" name="auth" value="ldap"> 🧑 LDAP (Basic)</label>
+                <label><input type="checkbox" name="auth" value="kerberos"> 🎫 Kerberos</label>
+                <label><input type="checkbox" name="auth" value="internal"> 👤 Внутренний пользователь</label>
+                <label><input type="checkbox" name="auth" value="embed_hmac"> 🌐 Embed (HMAC)</label>
+            </div>
+            <div class="muted" style="font-size:.8rem; margin-top:4px;">
+                По умолчанию — API-ключ.
+            </div>
+        </div>
+
+        <div class="field">
+            <label>Разрешённые origins (для embed, опционально)</label>
+            <input type="text" id="fOrigins" placeholder="https://acme.com,https://app.acme.com">
+        </div>
+
+        <div class="modal-actions">
+            <button class="secondary" id="cancelBtn">Отмена</button>
+            <button id="confirmBtn">Создать</button>
+        </div>
+    </div>
+</div>
+
+{# Модалка "сохраните секреты" #}
+<div id="resultModal" class="modal-backdrop" style="display:none;">
+    <div class="modal">
+        <h3>⚠️ Сохраните секреты — показываются один раз</h3>
+        <div id="resultContent"></div>
+        <div class="modal-actions">
+            <button onclick="location.reload()">OK, я сохранил</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.getElementById('createBtn').onclick = () => {
+    document.getElementById('createModal').style.display = 'flex';
+};
+document.getElementById('cancelBtn').onclick = () => {
+    document.getElementById('createModal').style.display = 'none';
+};
+
+document.getElementById('confirmBtn').onclick = async () => {
+    const name = document.getElementById('fName').value.trim();
+    const flow_id = document.getElementById('fFlow').value;
+    const origins = document.getElementById('fOrigins').value.trim();
+    const methods = Array.from(document.querySelectorAll('input[name=auth]:checked'))
+        .map(cb => cb.value);
+
+    if (!name) return alert('Введите название');
+    if (!flow_id) return alert('Выберите агента');
+    if (!methods.length) return alert('Выберите хотя бы один способ входа');
+
+    try {
+        const res = await fetch('/admin/integrations/create', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                name, flow_id,
+                auth_methods: methods,
+                allowed_origins: origins,
+            })
+        });
+        if (!res.ok) throw new Error(await res.text());
+        const d = await res.json();
+
+        document.getElementById('createModal').style.display = 'none';
+        document.getElementById('resultModal').style.display = 'flex';
+
+        let html = '';
+        html += `<p><b>Integration ID:</b><br><code>${d.id}</code></p>`;
+        if (d.api_key) html += `<p><b>API Key:</b><br><code>${d.api_key}</code></p>`;
+        html += `<p><b>HMAC Secret:</b><br><code>${d.secret}</code></p>`;
+        document.getElementById('resultContent').innerHTML = html;
+    } catch (e) { alert('Ошибка: ' + e.message); }
+};
+</script>
+{% endblock %}

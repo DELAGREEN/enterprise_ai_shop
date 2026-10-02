@@ -10,7 +10,7 @@ from database import AsyncSessionLocal, Base, engine
 from models import Group, User
 
 from session import get_current_user
-from routers import admin, auth, chat, public, embed
+from routers import admin, auth, chat, public, embed, api
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -23,6 +23,18 @@ MIGRATIONS = [
     "ALTER TABLE flow_publications ADD COLUMN IF NOT EXISTS override_name VARCHAR(200)",
     "ALTER TABLE flow_publications ADD COLUMN IF NOT EXISTS override_description TEXT",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_disabled BOOLEAN NOT NULL DEFAULT FALSE",
+    "ALTER TABLE embed_integrations RENAME TO integrations",
+    """
+    ALTER TABLE integrations
+        ADD COLUMN IF NOT EXISTS api_key_hash VARCHAR UNIQUE,
+        ADD COLUMN IF NOT EXISTS api_key_prefix VARCHAR(16),
+        ADD COLUMN IF NOT EXISTS auth_methods TEXT DEFAULT '["api_key"]'
+    """,
+    """
+    UPDATE integrations
+    SET auth_methods = '["embed_hmac"]'
+    WHERE auth_methods IS NULL
+    """,
 ]
 
 DEFAULT_GROUPS = [
@@ -67,7 +79,11 @@ PUBLIC_PATHS = {"/auth/login", "/auth/logout", "/favicon.ico"}
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
-    if path in PUBLIC_PATHS or path.startswith("/static") or path.startswith("/embed/"):
+    if (path in PUBLIC_PATHS 
+        or path.startswith("/static") 
+        or path.startswith("/embed/")
+        or path.startswith("/api/v1/")):
+        
         return await call_next(request)
 
     user = get_current_user(request)
@@ -87,9 +103,11 @@ async def auth_middleware(request: Request, call_next):
 
     return await call_next(request)
 
-app.mount("/static", StaticFiles(directory="/app/static"), name="static")
+#app.mount("/static", StaticFiles(directory="/app/static"), name="static")
+app.mount("/static", StaticFiles(directory="./static"), name="static")
 app.include_router(public.router)
 app.include_router(auth.router)
 app.include_router(admin.router)
 app.include_router(chat.router)
 app.include_router(embed.router, tags=["embed"])
+app.include_router(api.router)  

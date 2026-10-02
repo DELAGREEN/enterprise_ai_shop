@@ -122,19 +122,36 @@ class AgentGroup(Base):
     )
 
 
-class EmbedIntegration(Base):
-    """Интеграция для встраивания агента на сторонний портал."""
-    __tablename__ = "embed_integrations"
+class Integration(Base):
+    """
+    Универсальная интеграция: embed + API + прямой доступ.
+    Заменяет EmbedIntegration.
+    """
+    __tablename__ = "integrations"
 
-    id = Column(String, primary_key=True)              # публичный id (uuid hex)
-    name = Column(String, nullable=False)              # «Портал Acme», «Сайт поддержки»
+    id = Column(String, primary_key=True)               # публичный uuid hex
+    name = Column(String, nullable=False)         
     flow_id = Column(String, nullable=False, index=True)
-    secret = Column(String, nullable=False)            # HMAC-секрет
-    allowed_origins = Column(Text, nullable=True)      # "https://acme.com,https://portal.acme.com"
+
+    # Секрет для HMAC (embed) — всегда есть
+    secret = Column(String, nullable=False)
+
+    # API-ключ — опционально. Хранится хэш + префикс для показа
+    api_key_hash = Column(String, nullable=True, unique=True, index=True)
+    api_key_prefix = Column(String(16), nullable=True)   # "sk-abc12..." для UI
+
+    # Разрешённые способы аутентификации (JSON-массив строк)
+    # Возможные значения: "api_key", "ldap", "kerberos", "internal"
+    auth_methods = Column(Text, nullable=False, default='["api_key"]')
+
+    # Разрешённые origins (для embed и CORS)
+    allowed_origins = Column(Text, nullable=True)
+
+    # Метаданные
+    is_active = Column(Boolean, default=True, nullable=False)
     created_by = Column(String, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     last_used_at = Column(DateTime, nullable=True)
-    is_active = Column(Boolean, default=True, nullable=False)
 
 
 class EmbedNonce(Base):

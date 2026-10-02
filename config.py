@@ -61,7 +61,10 @@ SYSTEM_ADMIN_ENABLED = bool(ADMIN_PASSWORD)
 LOCAL_TZ_OFFSET_HOURS = int(os.getenv("LOCAL_TZ_OFFSET_HOURS", "3"))
 
 TRUSTED_PROXY_IPS = [
-    ip.strip() for ip in os.getenv("TRUSTED_PROXY_IPS", "127.0.0.1,::1").split(",") if ip.strip()
+    ip.strip() 
+    for ip in os.getenv("TRUSTED_PROXY_IPS", "127.0.0.1,::1,172.16.0.0/12").split(",") if ip.strip()
 ]
 PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "http://localhost:5001").rstrip("/")
 EMBED_TOKEN_TTL = int(os.getenv("EMBED_TOKEN_TTL", "300"))
+
+HEADER_KERBEROS_USER = os.getenv("HEADER_KERBEROS_USER", "X-Remote-User")
