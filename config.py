@@ -9,7 +9,7 @@ APP_NAME = os.getenv("APP_NAME", "Langflow Agents")
 APP_LOGO_URL = os.getenv("APP_LOGO_URL", "").strip()
 
 # --- Langflow ---
-LANGFLOW_URL = os.getenv("LANGFLOW_URL", "http://localhost:7860/api/v1")
+LANGFLOW_URL = os.getenv("LANGFLOW_URL", "")
 LANGFLOW_API_KEY = os.getenv("LANGFLOW_API_KEY", "")
 
 # --- PostgreSQL ---

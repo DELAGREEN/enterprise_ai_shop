@@ -87,10 +87,9 @@ async def auth_middleware(request: Request, call_next):
 
     return await call_next(request)
 
-
+app.mount("/static", StaticFiles(directory="/app/static"), name="static")
 app.include_router(public.router)
 app.include_router(auth.router)
 app.include_router(admin.router)
 app.include_router(chat.router)
 app.include_router(embed.router, tags=["embed"])
-app.mount("/static", StaticFiles(directory="static"), name="static")
