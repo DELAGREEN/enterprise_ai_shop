@@ -1,5 +1,7 @@
 import logging
 import uuid
+import hashlib
+import secrets
 import importlib.metadata
 from datetime import datetime, timedelta
 from langflow_client import LangflowClient, invalidate_flow_cache
@@ -38,7 +40,7 @@ from models import (
     LLMRequestLog,
     User,
     UserGroup,
-    EmbedIntegration,
+    Integration,
 )
 from session import get_current_user
 from templating import templates
@@ -817,7 +819,7 @@ async def admin_embeds(request: Request, db: AsyncSession = Depends(get_db)):
         return RedirectResponse(url="/" if user else "/auth/login", status_code=302)
 
     res = await db.execute(
-        select(EmbedIntegration).order_by(EmbedIntegration.created_at.desc())
+        select(Integration).order_by(Integration.created_at.desc())
     )
     items = list(res.scalars().all())
 
@@ -860,7 +862,7 @@ async def embeds_create(
     if not name:
         raise HTTPException(status_code=400, detail="Пустое имя")
 
-    integ = EmbedIntegration(
+    integ = Integration(
         id=uuid.uuid4().hex,
         name=name,
         flow_id=payload.flow_id,
@@ -886,7 +888,7 @@ async def embeds_toggle(
     payload: EmbedTogglePayload, request: Request, db: AsyncSession = Depends(get_db)
 ):
     _require_admin(request)
-    integ = await db.get(EmbedIntegration, payload.id)
+    integ = await db.get(Integration, payload.id)
     if not integ:
         raise HTTPException(status_code=404, detail="Интеграция не найдена")
     integ.is_active = payload.is_active
@@ -903,9 +905,73 @@ async def embeds_delete(
     payload: EmbedDeletePayload, request: Request, db: AsyncSession = Depends(get_db)
 ):
     _require_admin(request)
-    integ = await db.get(EmbedIntegration, payload.id)
+    integ = await db.get(Integration, payload.id)
     if not integ:
         raise HTTPException(status_code=404, detail="Интеграция не найдена")
     await db.delete(integ)
     await db.commit()
     return {"status": "ok"}
+
+
+@router.post("/integrations/create")
+async def integration_create(
+    payload: dict,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    payload:
+      {
+        "name": "Мобильное приложение",
+        "flow_id": "...",
+        "auth_methods": ["api_key"],         # или ["embed_hmac"], ["api_key","ldap"], ...
+        "allowed_origins": "https://app.com"
+      }
+    """
+    user = _require_admin(request)
+
+    name = payload.get("name", "").strip()
+    flow_id = payload.get("flow_id", "").strip()
+    if not name or not flow_id:
+        raise HTTPException(400, "name и flow_id обязательны")
+
+    auth_methods = payload.get("auth_methods") or ["api_key"]
+    valid_methods = {"api_key", "ldap", "kerberos", "internal", "embed_hmac"}
+    invalid = set(auth_methods) - valid_methods
+    if invalid:
+        raise HTTPException(400, f"Недопустимые методы: {invalid}")
+
+    integration_id = uuid.uuid4().hex
+    secret = secrets.token_hex(32)
+
+    # API-ключ нужен, если выбран api_key
+    api_key = None
+    api_key_hash = None
+    api_key_prefix = None
+    if "api_key" in auth_methods:
+        api_key = "sk_" + secrets.token_urlsafe(32)
+        api_key_hash = hashlib.sha256(api_key.encode()).hexdigest()
+        api_key_prefix = api_key[:12] + "..."
+
+    integ = Integration(
+        id=integration_id,
+        name=name,
+        flow_id=flow_id,
+        secret=secret,
+        api_key_hash=api_key_hash,
+        api_key_prefix=api_key_prefix,
+        auth_methods=json.dumps(auth_methods),
+        allowed_origins=(payload.get("allowed_origins") or "").strip() or None,
+        created_by=user.get("username"),
+    )
+    db.add(integ)
+    await db.commit()
+
+    # Возвращаем секреты ОДИН раз
+    return {
+        "status": "ok",
+        "id": integration_id,
+        "api_key": api_key,      # показать один раз!
+        "secret": secret,        # показать один раз!
+        "auth_methods": auth_methods,
+    }
