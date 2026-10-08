@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from langflow_client import LangflowClient, invalidate_flow_cache
 from embed_auth import generate_secret
 
+import config
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
@@ -84,6 +85,28 @@ def _parse_local_date(s: str, end: bool = False) -> datetime | None:
     if end:
         d = d + timedelta(days=1)
     return d - timedelta(hours=LOCAL_TZ_OFFSET_HOURS)
+
+
+async def _sync_demo_mode_publication(db: AsyncSession, enabled: bool):
+    """Обновляет публикацию демо-flow."""
+    row = (await db.execute(select(FlowPublication).where(FlowPublication.flow_id == config.DEMO_FLOW_ID))).scalar_one_or_none()
+    if enabled:
+        if row is None:
+            row = FlowPublication(
+                flow_id=config.DEMO_FLOW_ID,
+                is_published=True,
+                override_name=config.DEMO_FLOW_NAME,
+                override_description=config.DEMO_FLOW_DESCRIPTION,
+            )
+            if hasattr(db, "add"):
+                db.add(row)
+        else:
+            row.is_published = True
+            row.override_name = row.override_name or config.DEMO_FLOW_NAME
+            row.override_description = row.override_description or config.DEMO_FLOW_DESCRIPTION
+    elif row is not None:
+        row.is_published = False
+    await db.commit()
 
 
 # ---------- редирект с корня админки ----------
@@ -465,6 +488,9 @@ async def admin_settings(request: Request, db: AsyncSession = Depends(get_db)):
                 "admin_username_fallback": ADMIN_USERNAME,
                 "tz_offset": LOCAL_TZ_OFFSET_HOURS,
                 "database_url": safe_db_url,
+                "demo_mode_enabled": config.ENABLE_DEMO_MODE,
+                "demo_flow_id": config.DEMO_FLOW_ID,
+                "demo_flow_name": config.DEMO_FLOW_NAME,
                 "system_admin_username": ADMIN_USERNAME,
                 "system_admin_enabled": SYSTEM_ADMIN_ENABLED,
             },
@@ -491,6 +517,20 @@ async def admin_settings(request: Request, db: AsyncSession = Depends(get_db)):
         },
     )
 
+
+@router.post("/settings/demo-mode/toggle")
+async def admin_toggle_demo_mode(payload: dict, request: Request, db: AsyncSession = Depends(get_db)):
+    _require_admin(request)
+
+    enabled = bool(payload.get("enabled", False))
+    config.ENABLE_DEMO_MODE = enabled
+    await _sync_demo_mode_publication(db, enabled)
+    invalidate_flow_cache()
+    return {
+        "enabled": config.ENABLE_DEMO_MODE,
+        "flow_id": config.DEMO_FLOW_ID,
+        "name": config.DEMO_FLOW_NAME,
+    }
 
 # ---------- GROUPS ----------
 

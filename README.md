@@ -96,16 +96,32 @@ pg_isready -h 127.0.0.1 -p 5432 -U ai_shop
 
 ## 4. Запуск приложения
 
-Запускайте проект так:
+### 4.1. Продакшен / рабочее окружение
 
-```bash
-uvicorn app:app --host 0.0.0.0 --port 5001 --reload
+Для полноценного запуска с реальным Langflow и PostgreSQL подготовьте `.env`:
+
+```env
+LANGFLOW_URL=http://localhost:7860/api/v1
+LANGFLOW_API_KEY=your_key_here
+DATABASE_URL=postgresql+asyncpg://ai_shop:ai_shop_password@127.0.0.1:5432/ai_shop
+ENABLE_DEMO_MODE=false
 ```
 
-### Важное замечание
+Запуск сервиса:
 
-- `--reload` и `--workers` не используются вместе;
-- Uvicorn в режиме reload игнорирует `--workers`.
+```bash
+cd enterprise_ai_shop
+PYTHONPATH=. uvicorn app:app --host 0.0.0.0 --port 5001
+```
+
+Для локальной разработки с автоперезагрузкой:
+
+```bash
+cd enterprise_ai_shop
+PYTHONPATH=. uvicorn app:app --host 0.0.0.0 --port 5001 --reload
+```
+
+> Важно: `--reload` и `--workers` нельзя использовать одновременно. Для production-режима используйте один worker/один процесс без `--reload`.
 
 Открыть в браузере:
 
@@ -113,24 +129,61 @@ uvicorn app:app --host 0.0.0.0 --port 5001 --reload
 - admin: http://localhost:5001/admin
 - login: http://localhost:5001/auth/login
 
+### 4.2. Демонстрационный режим (без Langflow и vLLM)
+
+Для ручного UI-тестирования и показа интерфейса без внешних сервисов включите демо-режим:
+
+```bash
+cd enterprise_ai_shop
+export ENABLE_DEMO_MODE=true
+PYTHONPATH=. uvicorn app:app --host 0.0.0.0 --port 8000
+```
+
+Дополнительно можно задать параметры демо-flow:
+
+```env
+ENABLE_DEMO_MODE=true
+DEMO_FLOW_ID=demo-flow
+DEMO_FLOW_NAME="Demo assistant"
+DEMO_FLOW_DESCRIPTION="Демо-агент для тестирования интерфейса без Langflow."
+```
+
+В демо-режиме:
+
+- приложение не пытается ходить в Langflow;
+- список flow и ответ модели генерируются локально;
+- можно открыть чат, посмотреть UX и показать сценарии без внешней зависимости.
+
+Открыть в браузере:
+
+- http://localhost:8000/
+- http://localhost:8000/admin/settings
+
 ---
 
 ## 5. Запуск тестов
 
-Проект использует `unittest`.
+Проект поддерживает запуск через `pytest` и `unittest`.
 
-Запуск всех тестов:
+### Pytest
+
+```bash
+cd enterprise_ai_shop
+PYTHONPATH=. pytest -q
+```
+
+### Проверка конкретного набора
+
+```bash
+cd enterprise_ai_shop
+PYTHONPATH=. pytest -q tests/test_demo_mode.py
+PYTHONPATH=. pytest -q tests/test_route_smoke.py tests/test_auth_redirects.py tests/test_app_startup.py
+```
+
+### Legacy unittest
 
 ```bash
 python -m unittest discover -s tests -p "test_*.py" -v
-```
-
-Запуск конкретного набора тестов:
-
-```bash
-python -m unittest tests.test_auth_redirects -v
-python -m unittest tests.test_app_startup -v
-python -m unittest tests.test_route_smoke -v
 ```
 
 ---

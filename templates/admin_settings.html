@@ -38,6 +38,29 @@
 </div>
 
 <div class="card" style="margin-bottom: 16px;">
+    <h3 style="margin-top:0;">Demo mode</h3>
+    <div class="runtime-grid">
+        <div class="runtime-item">
+            <div class="k">Статус</div>
+            <div class="v" id="demoModeState">{{ 'включён' if cfg.demo_mode_enabled else 'выключен' }}</div>
+        </div>
+        <div class="runtime-item">
+            <div class="k">Flow ID</div>
+            <div class="v"><code>{{ cfg.demo_flow_id }}</code></div>
+        </div>
+        <div class="runtime-item">
+            <div class="k">Имя flow</div>
+            <div class="v">{{ cfg.demo_flow_name }}</div>
+        </div>
+    </div>
+    <div style="display:flex; justify-content:flex-start; gap:12px; margin-top:12px; flex-wrap:wrap;">
+        <button type="button" id="demoModeToggleBtn" class="secondary">
+            {{ 'Выключить demo mode' if cfg.demo_mode_enabled else 'Включить demo mode' }}
+        </button>
+    </div>
+</div>
+
+<div class="card" style="margin-bottom: 16px;">
     <h3 style="margin-top:0;">Langflow</h3>
     <table class="kv-table">
         <tr><th>URL API</th><td><code>{{ cfg.langflow_url }}</code></td></tr>
@@ -134,6 +157,41 @@
 
 {% block scripts %}
 <script>
+    const demoModeToggleBtn = document.getElementById('demoModeToggleBtn');
+    const demoModeState = document.getElementById('demoModeState');
+    let demoModeEnabled = {{ 'true' if cfg.demo_mode_enabled else 'false' }};
+
+    function syncDemoModeUi(enabled) {
+        if (demoModeState) {
+            demoModeState.textContent = enabled ? 'включён' : 'выключен';
+        }
+        if (demoModeToggleBtn) {
+            demoModeToggleBtn.textContent = enabled ? 'Выключить demo mode' : 'Включить demo mode';
+        }
+    }
+
+    if (demoModeToggleBtn) {
+        demoModeToggleBtn.addEventListener('click', async () => {
+            const nextValue = !demoModeEnabled;
+            try {
+                const response = await fetch('/admin/settings/demo-mode/toggle', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ enabled: nextValue }),
+                });
+                const data = await response.json();
+                if (!response.ok) {
+                    throw new Error(data.detail || 'Не удалось переключить demo mode');
+                }
+                demoModeEnabled = Boolean(data.enabled);
+                syncDemoModeUi(demoModeEnabled);
+            } catch (error) {
+                window.alert(error.message || 'Ошибка переключения demo mode');
+            }
+        });
+    }
+
+    syncDemoModeUi(demoModeEnabled);
     /* ---------- Модалка со списком пакетов ---------- */
 const ALL_PACKAGES = {{ runtime.packages | tojson }};
 
