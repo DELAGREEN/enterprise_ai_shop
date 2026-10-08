@@ -2,6 +2,7 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+import config
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy import select, text
@@ -65,6 +66,32 @@ async def _seed_defaults():
         await db.commit()
 
 
+async def _seed_demo_mode_publication():
+    """Создаёт один демо-flow для локального UI-проверки без Langflow."""
+    if not config.ENABLE_DEMO_MODE:
+        return
+
+    async with AsyncSessionLocal() as db:
+        existing = await db.execute(
+            select(FlowPublication).where(FlowPublication.flow_id == config.DEMO_FLOW_ID)
+        )
+        row = existing.scalar_one_or_none()
+        if row is None:
+            row = FlowPublication(
+                flow_id=config.DEMO_FLOW_ID,
+                is_published=True,
+                override_name=config.DEMO_FLOW_NAME,
+                override_description=config.DEMO_FLOW_DESCRIPTION,
+            )
+            db.add(row)
+        else:
+            row.is_published = True
+            row.override_name = row.override_name or config.DEMO_FLOW_NAME
+            row.override_description = row.override_description or config.DEMO_FLOW_DESCRIPTION
+
+        await db.commit()
+
+
 async def _apply_migrations() -> None:
     """Запускает каждую миграцию в отдельной транзакции.
 
@@ -89,6 +116,7 @@ async def lifespan(app: FastAPI):
 
     # Засев системных групп ПОСЛЕ создания таблиц
     await _seed_defaults()
+    await _seed_demo_mode_publication()
 
     logger.info("Схема БД инициализирована, системные группы проверены")
     yield

@@ -11,6 +11,33 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+
+def _demo_flow_list() -> list[dict]:
+    """Возвращает список flow для демо-режима без Langflow."""
+    if not config.ENABLE_DEMO_MODE:
+        return []
+    return [{
+        "id": config.DEMO_FLOW_ID,
+        "name": config.DEMO_FLOW_NAME,
+        "description": config.DEMO_FLOW_DESCRIPTION,
+        "is_published": True,
+    }]
+
+
+def _demo_flow_response(input_value: str) -> dict:
+    """Возвращает mock-ответ, который распознаётся текущим парсером ответов."""
+    prompt = (input_value or "").strip() or "тестовый запрос"
+    answer = f"[DEMO MODE] Это демо-ответ для: {prompt}. Langflow и vLLM сейчас недоступны, но интерфейс уже работает как надо."
+    return {
+        "outputs": [{
+            "outputs": [{
+                "results": {
+                    "message": {"text": answer}
+                }
+            }]
+        }]
+    }
+
 #-------- Кэш списка flow---------
 _FLOW_CACHE: dict[str, Any] = {"data": None, "ts": 0.0}
 _FLOW_TTL = 30.0 # секунды
@@ -39,6 +66,12 @@ class LangflowClient:
         return h
 
     async def get_all_flows(self) -> list:
+        if config.ENABLE_DEMO_MODE:
+            flows = _demo_flow_list()
+            _FLOW_CACHE["data"] = flows
+            _FLOW_CACHE["ts"] = time.monotonic()
+            return flows
+
         now = time.monotonic()
 
         # Свежий кэш - отдаём сразу
@@ -58,15 +91,10 @@ class LangflowClient:
                 else:
                     flows = []
 
-                # Сохраняем в кэш
                 _FLOW_CACHE["data"] = flows
                 _FLOW_CACHE["ts"] = now
-                logger.debug("Кэш flow обновлён: %d записей", len(flows))
                 return flows
-            
-        except Exception as e:
-            logger.error("Не удалось получить список flow из Langflow: %s", e)
-
+        except Exception:
             # Устаревший кэш лечше, чем пустой список
             stale = _FLOW_CACHE["data"]
             if stale is not None:
@@ -75,6 +103,9 @@ class LangflowClient:
             return []
 
     async def run_flow(self, flow_id: str, input_value: str, session_id: str | None = None) -> dict:
+        if config.ENABLE_DEMO_MODE:
+            return _demo_flow_response(input_value)
+
         payload = {
             "input_value": input_value,
             "output_type": "chat",
