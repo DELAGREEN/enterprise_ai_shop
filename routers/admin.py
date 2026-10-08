@@ -847,6 +847,83 @@ async def admin_embeds(request: Request, db: AsyncSession = Depends(get_db)):
     )
 
 
+
+
+@router.get('/integrations', response_class=HTMLResponse)
+async def admin_integrations(request: Request, db: AsyncSession = Depends(get_db)):
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse(url='/auth/login?next=/admin/integrations', status_code=302)
+    if not user.get('is_admin'):
+        return RedirectResponse(url='/', status_code=302)
+
+    res = await db.execute(select(Integration).order_by(Integration.created_at.desc()))
+    raw_items = list(res.scalars().all())
+    items = []
+    for item in raw_items:
+        methods = []
+        try:
+            parsed = __import__('json').loads(item.auth_methods or '[]')
+            if isinstance(parsed, list):
+                methods = parsed
+        except Exception:
+            methods = []
+        items.append({
+            'id': item.id,
+            'name': item.name,
+            'flow_id': item.flow_id,
+            'is_active': item.is_active,
+            'api_key_prefix': item.api_key_prefix,
+            'auth_methods_list': methods,
+            'created_at': item.created_at,
+        })
+
+    pub_res = await db.execute(
+        select(FlowPublication.flow_id).where(FlowPublication.is_published.is_(True))
+    )
+    published_ids = [fid for (fid,) in pub_res.all()]
+
+    client = LangflowClient()
+    flows = await client.get_all_flows()
+    flow_options = [
+        {'id': f.get('id'), 'name': f.get('name') or f.get('id')}
+        for f in flows if f.get('id') in published_ids
+    ]
+
+    return templates.TemplateResponse(
+        'admin_integrations.html',
+        {
+            'request': request,
+            'user': user,
+            'active_menu': 'integrations',
+            'integrations': items,
+            'flow_options': flow_options,
+            'base_url': PUBLIC_BASE_URL,
+        },
+    )
+
+
+@router.post('/integrations/toggle')
+async def integrations_toggle(payload: dict, request: Request, db: AsyncSession = Depends(get_db)):
+    _require_admin(request)
+    integ = await db.get(Integration, payload.get('id'))
+    if not integ:
+        raise HTTPException(status_code=404, detail='Интеграция не найдена')
+    integ.is_active = bool(payload.get('is_active', integ.is_active))
+    await db.commit()
+    return {'status': 'ok'}
+
+
+@router.post('/integrations/delete')
+async def integrations_delete(payload: dict, request: Request, db: AsyncSession = Depends(get_db)):
+    _require_admin(request)
+    integ = await db.get(Integration, payload.get('id'))
+    if not integ:
+        raise HTTPException(status_code=404, detail='Интеграция не найдена')
+    await db.delete(integ)
+    await db.commit()
+    return {'status': 'ok'}
+
 class EmbedCreatePayload(BaseModel):
     name: str
     flow_id: str

@@ -7,7 +7,19 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy import select, text
 
 from database import AsyncSessionLocal, Base, engine
-from models import Group, User
+from models import (
+    AgentFavorite,
+    AgentGroup,
+    Chat,
+    ChatMessage,
+    EmbedNonce,
+    FlowPublication,
+    Group,
+    Integration,
+    LLMRequestLog,
+    User,
+    UserGroup,
+)
 
 from session import get_current_user
 from routers import admin, auth, chat, public, embed, api
@@ -52,15 +64,28 @@ async def _seed_defaults():
                 logger.info("Создана системная группа: %s", gid)
         await db.commit()
 
+
+async def _apply_migrations() -> None:
+    """Запускает каждую миграцию в отдельной транзакции.
+
+    Это важно: если одна миграция падает, последующая не должна находиться
+    в уже "забитой" транзакции. Новый connection per statement устраняет
+    состояние "transaction aborted".
+    """
+    for stmt in MIGRATIONS:
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(text(stmt))
+        except Exception as e:
+            logger.warning("Миграция пропущена (%s): %s", stmt, e)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        for stmt in MIGRATIONS:
-            try:
-                await conn.execute(text(stmt))
-            except Exception as e:
-                logger.warning("Миграция пропущена (%s): %s", stmt, e)
+
+    await _apply_migrations()
 
     # Засев системных групп ПОСЛЕ создания таблиц
     await _seed_defaults()
