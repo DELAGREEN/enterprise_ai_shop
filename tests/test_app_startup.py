@@ -11,7 +11,7 @@ class FakeConnection:
     async def execute(self, stmt):
         self.calls.append(str(stmt))
         if len(self.calls) == 1:
-            raise RuntimeError('first migration failed')
+            raise RuntimeError("first migration failed")
 
 
 class FakeBeginContext:
@@ -29,27 +29,23 @@ class AppStartupMigrationTests(unittest.TestCase):
     def test_apply_migrations_skips_failed_statement_and_continues(self):
         original_engine = app.engine
         original_migrations = app.MIGRATIONS
-        calls = []
 
         class FakeEngine:
-            def begin(self):
-                conn = FakeConnection()
-                return FakeBeginContext(conn)
+            def __init__(self):
+                self.conn = FakeConnection()
 
-        async def fake_execute(self, stmt):
-            calls.append(str(stmt))
-            if len(calls) == 1:
-                raise RuntimeError('first migration failed')
+            def begin(self):
+                return FakeBeginContext(self.conn)
 
         try:
             app.engine = FakeEngine()
-            app.MIGRATIONS = ['first', 'second']
+            app.MIGRATIONS = ["first", "second"]
             asyncio.run(app._apply_migrations())
-            self.assertEqual(len(calls), 2)
+            self.assertEqual(len(app.engine.conn.calls), 2)
         finally:
             app.engine = original_engine
             app.MIGRATIONS = original_migrations
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

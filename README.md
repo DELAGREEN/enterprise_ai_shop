@@ -1,92 +1,236 @@
 # Langflow Agent Manager
 
-Веб-приложение на FastAPI для управления AI-агентами (flow) из Langflow.
+FastAPI-приложение для управления AI-агентами и публикацией flow из Langflow. В проекте есть публичный дашборд, админка, LDAP-аутентификация, чат, интеграции и API.
 
-## Возможности
-- Публичный дашборд с опубликованными агентами
-- Админка для управления публикацией (LDAP-аутентификация)
-- Чат с выбранным агентом (Markdown-рендеринг, блок «мышления модели»)
-- Хранение статуса публикации в PostgreSQL
-- Интеграция с Langflow API
+## Что умеет проект
 
-## Быстрый старт
+- публичный дашборд с опубликованными flow;
+- админка для управления публикациями, пользователями, группами и интеграциями;
+- LDAP-авторизация и fallback-админ для локальной разработки;
+- чат с выбранным flow;
+- API для получения статуса flow и работы с чатами;
+- хранение данных в PostgreSQL;
+- автоинициализация схемы и базовых системных групп при старте.
 
-### 1. Подготовка окружения
+---
+
+## Требования
+
+- Python 3.11+
+- PostgreSQL 14/16
+- Docker (опционально, если поднимаете БД и LDAP через compose)
+- Langflow API (если используется работа с flow)
+
+---
+
+## 1. Установка зависимостей
 
 ```bash
-python -m venv venv
-source venv/bin/activate          # Linux/macOS
-# venv\Scripts\activate           # Windows
-pip install -r requirements.txt
+git clone <repo-url>
+cd enterprise_ai_shop
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
 ```
 
-### 2. Настройки
+---
+
+## 2. Настройка окружения
+
+Создайте файл `.env` и заполните переменные под своё окружение:
 
 ```bash
 cp .env.example .env
-# отредактируйте .env под своё окружение
 ```
 
-### 3. Запуск зависимостей
+Пример содержимого `.env`:
 
-Убедитесь, что запущены:
-- **PostgreSQL** (база `langflow_admin` создана)
-- **LDAP** на `localhost:389` с base DN `ou=users,dc=example,dc=com`
-- **Langflow** на `http://localhost:7860`
+```env
+# Langflow
+LANGFLOW_URL=http://localhost:7860/api/v1
+LANGFLOW_API_KEY=your_key_here
 
-Создать БД можно так:
+# PostgreSQL
+DATABASE_URL=postgresql+asyncpg://ai_shop:ai_shop_password@localhost/ai_shop
+
+# Session
+SECRET_KEY=change-me-super-secret
+
+# LDAP
+LDAP_SERVER=localhost:389
+LDAP_USE_SSL=false
+LDAP_BASE_DN=ou=users,dc=example,dc=com
+LDAP_USER_ATTR=uid
+
+# Fallback admin
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=admin
+```
+
+> Важно: локальный запуск приложения ожидает доступную PostgreSQL на `127.0.0.1:5432` и базу `ai_shop`.
+
+---
+
+## 3. Поднятие базы данных и зависимостей
+
+### Вариант A: через Docker
 
 ```bash
-createdb langflow_admin
-# или psql -c "CREATE DATABASE langflow_admin;"
+docker compose -f docker/docker-compose.yml up -d ia_shop_db ldap
 ```
 
-### 4. Запуск приложения
+### Вариант B: PostgreSQL вручную
+
+```bash
+docker run -d --name ai_shop_db   -e POSTGRES_USER=ai_shop   -e POSTGRES_PASSWORD=ai_shop_password   -e POSTGRES_DB=ai_shop   -p 5432:5432   postgres:16
+```
+
+Проверка доступности:
+
+```bash
+pg_isready -h 127.0.0.1 -p 5432 -U ai_shop
+```
+
+---
+
+## 4. Запуск приложения
+
+Запускайте проект так:
 
 ```bash
 uvicorn app:app --host 0.0.0.0 --port 5001 --reload
 ```
 
-Откройте:
-- Дашборд: http://localhost:5001/
-- Админка: http://localhost:5001/admin
-- Логин:   http://localhost:5001/auth/login
+### Важное замечание
 
-### 5. Тестовый LDAP (пример через osixia/openldap)
+- `--reload` и `--workers` не используются вместе;
+- Uvicorn в режиме reload игнорирует `--workers`.
+
+Открыть в браузере:
+
+- dashboard: http://localhost:5001/
+- admin: http://localhost:5001/admin
+- login: http://localhost:5001/auth/login
+
+---
+
+## 5. Запуск тестов
+
+Проект использует `unittest`.
+
+Запуск всех тестов:
 
 ```bash
-docker run -d --name ldap -p 389:389 \
-  -e LDAP_ORGANISATION="Example" \
-  -e LDAP_DOMAIN="example.com" \
-  -e LDAP_ADMIN_PASSWORD="password" \
-  osixia/openldap:latest
+python -m unittest discover -s tests -p "test_*.py" -v
 ```
 
-## Структура БД
+Запуск конкретного набора тестов:
 
-Таблица `flow_publications` создаётся автоматически при старте:
-
-| Поле          | Тип       | Описание                     |
-| ------------- | --------- | ---------------------------- |
-| flow_id       | string PK | ID flow из Langflow          |
-| is_published  | bool      | Опубликован ли               |
-| published_at  | timestamp | Дата публикации              |
-| updated_at    | timestamp | Дата обновления              |
-
-
-## Установка и запуск:
-``` 
-# 1. Системные зависимости (Linux)
-sudo apt-get install -y build-essential libldap2-dev libsasl2-dev libssl-dev
-
-# 2. Python-пакеты
-pip install -r requirements.txt
-
-# 3. Настройки
-cp .env.example .env
-# отредактируйте .env под своё окружение
-
-# 4. Запуск
+```bash
+python -m unittest tests.test_auth_redirects -v
+python -m unittest tests.test_app_startup -v
+python -m unittest tests.test_route_smoke -v
 ```
-uvicorn app:app --host 0.0.0.0 --port 5001 --reload --workers 4
+
+---
+
+## 6. Проверка корректности запуска
+
+После старта в логах должен появиться вывод вида:
+
+```text
+Application startup complete.
 ```
+
+Если приложение не запускается:
+
+1. проверьте, что PostgreSQL запущен и доступен;
+2. проверьте значения в `.env`;
+3. убедитесь, что в проекте нет старых uvicorn-процессов на порту 5001;
+4. проверьте, что база `ai_shop` существует и доступна пользователю `ai_shop`.
+
+---
+
+## 7. Docker и инфраструктура
+
+В проекте есть конфиги в директории `docker/`:
+
+```bash
+ls docker
+```
+
+Для запуска базовой инфраструктуры:
+
+```bash
+docker compose -f docker/docker-compose.yml up -d
+```
+
+---
+
+## 8. Частые проблемы и решения
+
+### Ошибка подключения к PostgreSQL
+
+```text
+connection refused
+```
+
+Решение:
+
+```bash
+docker compose -f docker/docker-compose.yml up -d ia_shop_db
+```
+
+### Uvicorn не стартует из-за `--workers`
+
+```text
+workers are ignored when reloading is enabled
+```
+
+Решение: уберите `--workers` при запуске с `--reload`.
+
+### Маршруты не найдены / 404
+
+Проверьте:
+- что роутеры подключены в [app.py](app.py);
+- что URL совпадает с объявленным в маршрутах;
+- что нет старых процессов uvicorn.
+
+---
+
+## 9. Полезные команды
+
+```bash
+# запуск приложения
+uvicorn app:app --host 0.0.0.0 --port 5001 --reload
+
+# запуск PostgreSQL через Docker
+docker compose -f docker/docker-compose.yml up -d ia_shop_db ldap
+
+# запуск всех тестов
+python -m unittest discover -s tests -p "test_*.py" -v
+
+# проверка процесса на порту
+ss -lntp | grep 5001
+```
+
+---
+
+## 10. Основные файлы проекта
+
+- [app.py](app.py) — точка входа, middleware и lifespan;
+- [database.py](database.py) — инициализация async SQLAlchemy;
+- [config.py](config.py) — переменные окружения;
+- [models.py](models.py) — модели базы данных;
+- [routers/](routers/) — FastAPI-маршруты;
+- [templates/](templates/) — HTML-шаблоны;
+- [tests/](tests/) — регрессионные тесты.
+
+---
+
+## 11. Безопасность
+
+- редирект после логина проверяется и должен принимать только локальные относительные пути;
+- публичные endpoint'ы должны проверять наличие сессии;
+- не используйте `--workers` одновременно с `--reload`.
