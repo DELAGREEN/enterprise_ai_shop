@@ -98,7 +98,21 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Langflow Agent Manager", lifespan=lifespan)
 
-PUBLIC_PATHS = {"/auth/login", "/auth/logout", "/favicon.ico"}
+PUBLIC_PATHS = {"/auth/login", "/auth/logout", "/favicon.ico", "/health"}
+
+
+@app.get("/health")
+async def health_check():
+    try:
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+        return {"status": "ok", "database": "up"}
+    except Exception as exc:
+        logger.warning("Health check failed: %s", exc)
+        return JSONResponse(
+            {"status": "down", "database": "down", "error": str(exc)},
+            status_code=503,
+        )
 
 
 @app.middleware("http")

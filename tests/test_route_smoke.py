@@ -3,11 +3,13 @@ import unittest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from app import health_check
 from routers import admin, api, auth, chat, embed, public
 
 
 def build_test_app() -> FastAPI:
     app = FastAPI(title="route-smoke-test")
+    app.add_api_route("/health", health_check, methods=["GET"])
     app.include_router(public.router)
     app.include_router(auth.router)
     app.include_router(admin.router)
@@ -97,6 +99,11 @@ class RouteSmokeTests(unittest.TestCase):
     def test_auth_login_page_responds(self):
         response = self.client.get("/auth/login")
         self.assertIn(response.status_code, (200, 302, 401))
+
+    def test_health_endpoint_exists(self):
+        response = self.client.get("/health")
+        self.assertIn(response.status_code, (200, 503))
+        self.assertIn("status", response.json())
 
     def test_admin_page_has_route_response(self):
         response = self.client.get("/admin")

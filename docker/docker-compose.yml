@@ -405,8 +405,16 @@ services:
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro
     depends_on:
-      - ia_shop_db
-      - langflow
+      ia_shop_db:
+        condition: service_healthy
+      langflow:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", 'python3 -c "import urllib.request, sys; r = urllib.request.urlopen(\"http://127.0.0.1:8000/health\", timeout=5); sys.exit(0 if r.status == 200 else 1)"']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     networks:
       - ai_shop
       - langflow-network
