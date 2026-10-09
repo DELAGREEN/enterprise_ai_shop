@@ -50,13 +50,6 @@ services:
     #  - "7860:7860"            
     environment:
       - DO_NOT_TRACK=true
-      # Предотвращает попытки подключения к внешним API при старте
-      - LANGFLOW_LAZY_LOAD_COMPONENTS=true
-      # Отключает создание и обновление стартовых проектов, которые могут требовать сеть
-      - LANGFLOW_CREATE_STARTER_PROJECTS=false
-      - LANGFLOW_UPDATE_STARTER_PROJECTS=false
-      # Указывает, что нет прокси, чтобы избежать проблем с сетевыми запросами
-      - no_proxy=*
       - LANGFLOW_AUTHZ_AUDIT_ENABLED=true
       # Таймзона
       - TZ=Europe/Moscow
@@ -73,15 +66,12 @@ services:
       # ЭТИ ДВЕ СТРОКИ СНИМАЮТ БЛОКИРОВКУ БЕЗОПАСНОСТИ ДЛЯ ТЕСТА
       #- LANGFLOW_COMPONENTS_ALLOW_CUSTOM=true
       #- LANGFLOW_COMPONENTS_VALIDATE_CUSTOM=false
-
       #- LANGFLOW_SECRET_KEY=0d3a7fae637d1b852f91dfba363fa394b1bdb08910c1f22a6ff129a9e3010ea9
       #- LANGFLOW_NEW_USER_IS_ACTIVE=False
       #- LANGFLOW_ENABLE_SIGNUP=False
       #- LANGFLOW_ENABLE_SUPERUSER_CLI=False
       - LANGFLOW_ALLOW_CUSTOM_COMPONENTS=true
-      - LANGFLOW_​AUTHZ_​ENABLED=true
-
-
+      - LANGFLOW_AUTHZ_ENABLED=true
       # При значении true пользователи, не являющиеся суперпользователями, по-прежнему могут просматривать 
       # и использовать пользовательские компоненты в потоках, но они не могут создавать новые пользовательские 
       # компоненты или редактировать код пользовательского компонента.При значении true пользователи, не являющиеся 
@@ -94,7 +84,6 @@ services:
       #- LANGFLOW_WORKERS=3  # any value > 1
       #- LANGFLOW_JOB_QUEUE_TYPE=redis
       #- LANGFLOW_REDIS_QUEUE_URL=redis://your-redis-host:6379/1
-      
       # или конкретно ваш домен:
       # - LANGFLOW_CORS_ALLOW_ORIGINS=http://192.168.0.169:7860,https://ваш-домен.ru
       # Настройки, которые заставят внутреннего агента видеть твой vLLM по умолчанию:
@@ -110,7 +99,6 @@ services:
       #- LANGFLOW_EXTERNAL_AUTH_PROVIDER=keycloak
       #- LANGFLOW_EXTERNAL_AUTH_PROVIDER_NAME=Keycloak
       #- LANGFLOW_EXTERNAL_AUTH_TOKEN_HEADER=Authorization
-
       # Keycloak realm endpoints (http is allowed for localhost in development)
       #- LANGFLOW_EXTERNAL_AUTH_TRUSTED_JWT_DECODE=true
       #- LANGFLOW_EXTERNAL_AUTH_JWKS_URL=http://127.0.0.1:8080/realms/langflow/protocol/openid-connect/certs
@@ -118,7 +106,6 @@ services:
       #- LANGFLOW_EXTERNAL_AUTH_AUDIENCE=langflow-app
       #XmDAsoUB8XX6ymOScb444WM1ev3yU37X
       #http://localhost:8080/realms/langflow/protocol/openid-connect/auth?client_id=langflow-app&redirect_uri=http://localhost:7860&response_type=code&scope=openid
-      
       #-----Enable the Redis job queue-----
       #- LANGFLOW_WORKERS=3  # any value > 1
       #- LANGFLOW_JOB_QUEUE_TYPE=redis
@@ -412,9 +399,9 @@ services:
       - langflow-network
 
   nginx:
-    #build:
-    #  context: ./nginx
-    #  dockerfile: Dockerfile
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
     image: astra/ubi17-nginx1283-kerberos:1.28
     container_name: nginx-proxy
     ports:

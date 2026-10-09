@@ -21,6 +21,7 @@ RUN apt-get update && \
         ca-certificates \
         krb5-user \
         libgssapi-krb5-2 \
+        libnginx-mod-http-subs-filter \
         && rm -rf /var/lib/apt/lists/*
 
 # ---------- Сборка модуля SPNEGO ----------
