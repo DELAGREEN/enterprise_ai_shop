@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from langflow_client import LangflowClient, invalidate_flow_cache
 from embed_auth import generate_secret
 
+import config
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
@@ -84,6 +85,28 @@ def _parse_local_date(s: str, end: bool = False) -> datetime | None:
     if end:
         d = d + timedelta(days=1)
     return d - timedelta(hours=LOCAL_TZ_OFFSET_HOURS)
+
+
+async def _sync_demo_mode_publication(db: AsyncSession, enabled: bool):
+    """Обновляет публикацию демо-flow."""
+    row = (await db.execute(select(FlowPublication).where(FlowPublication.flow_id == config.DEMO_FLOW_ID))).scalar_one_or_none()
+    if enabled:
+        if row is None:
+            row = FlowPublication(
+                flow_id=config.DEMO_FLOW_ID,
+                is_published=True,
+                override_name=config.DEMO_FLOW_NAME,
+                override_description=config.DEMO_FLOW_DESCRIPTION,
+            )
+            if hasattr(db, "add"):
+                db.add(row)
+        else:
+            row.is_published = True
+            row.override_name = row.override_name or config.DEMO_FLOW_NAME
+            row.override_description = row.override_description or config.DEMO_FLOW_DESCRIPTION
+    elif row is not None:
+        row.is_published = False
+    await db.commit()
 
 
 # ---------- редирект с корня админки ----------
@@ -465,6 +488,9 @@ async def admin_settings(request: Request, db: AsyncSession = Depends(get_db)):
                 "admin_username_fallback": ADMIN_USERNAME,
                 "tz_offset": LOCAL_TZ_OFFSET_HOURS,
                 "database_url": safe_db_url,
+                "demo_mode_enabled": config.ENABLE_DEMO_MODE,
+                "demo_flow_id": config.DEMO_FLOW_ID,
+                "demo_flow_name": config.DEMO_FLOW_NAME,
                 "system_admin_username": ADMIN_USERNAME,
                 "system_admin_enabled": SYSTEM_ADMIN_ENABLED,
             },
@@ -491,6 +517,20 @@ async def admin_settings(request: Request, db: AsyncSession = Depends(get_db)):
         },
     )
 
+
+@router.post("/settings/demo-mode/toggle")
+async def admin_toggle_demo_mode(payload: dict, request: Request, db: AsyncSession = Depends(get_db)):
+    _require_admin(request)
+
+    enabled = bool(payload.get("enabled", False))
+    config.ENABLE_DEMO_MODE = enabled
+    await _sync_demo_mode_publication(db, enabled)
+    invalidate_flow_cache()
+    return {
+        "enabled": config.ENABLE_DEMO_MODE,
+        "flow_id": config.DEMO_FLOW_ID,
+        "name": config.DEMO_FLOW_NAME,
+    }
 
 # ---------- GROUPS ----------
 
@@ -846,6 +886,83 @@ async def admin_embeds(request: Request, db: AsyncSession = Depends(get_db)):
         },
     )
 
+
+
+
+@router.get('/integrations', response_class=HTMLResponse)
+async def admin_integrations(request: Request, db: AsyncSession = Depends(get_db)):
+    user = get_current_user(request)
+    if not user:
+        return RedirectResponse(url='/auth/login?next=/admin/integrations', status_code=302)
+    if not user.get('is_admin'):
+        return RedirectResponse(url='/', status_code=302)
+
+    res = await db.execute(select(Integration).order_by(Integration.created_at.desc()))
+    raw_items = list(res.scalars().all())
+    items = []
+    for item in raw_items:
+        methods = []
+        try:
+            parsed = __import__('json').loads(item.auth_methods or '[]')
+            if isinstance(parsed, list):
+                methods = parsed
+        except Exception:
+            methods = []
+        items.append({
+            'id': item.id,
+            'name': item.name,
+            'flow_id': item.flow_id,
+            'is_active': item.is_active,
+            'api_key_prefix': item.api_key_prefix,
+            'auth_methods_list': methods,
+            'created_at': item.created_at,
+        })
+
+    pub_res = await db.execute(
+        select(FlowPublication.flow_id).where(FlowPublication.is_published.is_(True))
+    )
+    published_ids = [fid for (fid,) in pub_res.all()]
+
+    client = LangflowClient()
+    flows = await client.get_all_flows()
+    flow_options = [
+        {'id': f.get('id'), 'name': f.get('name') or f.get('id')}
+        for f in flows if f.get('id') in published_ids
+    ]
+
+    return templates.TemplateResponse(
+        'admin_integrations.html',
+        {
+            'request': request,
+            'user': user,
+            'active_menu': 'integrations',
+            'integrations': items,
+            'flow_options': flow_options,
+            'base_url': PUBLIC_BASE_URL,
+        },
+    )
+
+
+@router.post('/integrations/toggle')
+async def integrations_toggle(payload: dict, request: Request, db: AsyncSession = Depends(get_db)):
+    _require_admin(request)
+    integ = await db.get(Integration, payload.get('id'))
+    if not integ:
+        raise HTTPException(status_code=404, detail='Интеграция не найдена')
+    integ.is_active = bool(payload.get('is_active', integ.is_active))
+    await db.commit()
+    return {'status': 'ok'}
+
+
+@router.post('/integrations/delete')
+async def integrations_delete(payload: dict, request: Request, db: AsyncSession = Depends(get_db)):
+    _require_admin(request)
+    integ = await db.get(Integration, payload.get('id'))
+    if not integ:
+        raise HTTPException(status_code=404, detail='Интеграция не найдена')
+    await db.delete(integ)
+    await db.commit()
+    return {'status': 'ok'}
 
 class EmbedCreatePayload(BaseModel):
     name: str

@@ -134,6 +134,48 @@
     }
     .thinking.hidden { display: none; }
     .empty-hint { color: #6b7280; font-size: .9rem; padding: 8px; }
+    .loading-indicator {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        color: #4b5563;
+        font-size: 0.9rem;
+    }
+    .loading-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: #3b82f6;
+        display: inline-block;
+        animation: pulse 1s ease-in-out infinite;
+    }
+    @keyframes pulse {
+        0%, 100% { opacity: 0.3; transform: scale(0.9); }
+        50% { opacity: 1; transform: scale(1.1); }
+    }
+    .chat-error {
+        color: #b91c1c;
+        background: #fef2f2;
+        border: 1px solid #fecaca;
+        border-radius: 8px;
+        padding: 10px 12px;
+        margin-top: 8px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        flex-wrap: wrap;
+    }
+    .retry-btn {
+        background: #2563eb;
+        color: white;
+        border: none;
+        border-radius: 6px;
+        padding: 4px 10px;
+        font-size: 0.8rem;
+        cursor: pointer;
+    }
+    .retry-btn:hover { background: #1d4ed8; }
 
     /* Инлайн-редактирование названия */
     .chat-item .title-input {
@@ -314,20 +356,50 @@ function appendUserMessage(text) {
 }
 
 /* ---------- Отправка ---------- */
-form.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const text = input.value.trim();
-    if (!text) return;
+let lastUserMessageText = '';
 
+function renderLoadingBotBubble() {
+    const botDiv = document.createElement('div');
+    botDiv.className = 'msg bot';
+    botDiv.innerHTML = `
+        <div class="loading-indicator">
+            <span class="loading-dot"></span>
+            <span>Генерация ответа…</span>
+        </div>
+    `;
+    messagesEl.appendChild(botDiv);
+    scrollBottom();
+    return botDiv;
+}
+
+function renderBotError(botDiv, message, retryText) {
+    botDiv.innerHTML = '';
+    const err = document.createElement('div');
+    err.className = 'chat-error';
+    err.innerHTML = '<span>' + escapeHtml(message) + '</span>';
+
+    const retryBtn = document.createElement('button');
+    retryBtn.type = 'button';
+    retryBtn.textContent = 'Повторить';
+    retryBtn.className = 'retry-btn';
+    retryBtn.addEventListener('click', () => {
+        const text = retryText || lastUserMessageText;
+        if (text) {
+            form.requestSubmit();
+        }
+    });
+    err.appendChild(retryBtn);
+    botDiv.appendChild(err);
+    scrollBottom();
+}
+
+async function submitChatMessage(text) {
+    lastUserMessageText = text;
     appendUserMessage(text);
     input.value = '';
     autosize();
 
-    const botDiv = document.createElement('div');
-    botDiv.className = 'msg bot';
-    botDiv.innerHTML = '<em>…</em>';
-    messagesEl.appendChild(botDiv);
-    scrollBottom();
+    const botDiv = renderLoadingBotBubble();
 
     try {
         const res = await fetch(`/chat/${flowId}/${chatId}/send`, {
@@ -335,11 +407,13 @@ form.addEventListener('submit', async (e) => {
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({message: text})
         });
-        if (!res.ok) {
-            const errText = await res.text();
-            throw new Error('HTTP ' + res.status + ': ' + errText);
-        }
+
         const data = await res.json();
+        if (!res.ok || data.status === 'error') {
+            const message = data && data.error ? data.error : 'Ошибка flow. Попробуйте ещё раз.';
+            renderBotError(botDiv, message, text);
+            return;
+        }
 
         botDiv.innerHTML = '';
         if (data.thinking) {
@@ -359,9 +433,16 @@ form.addEventListener('submit', async (e) => {
             activeItem.querySelector('.title').textContent = data.title;
         }
     } catch (err) {
-        botDiv.innerHTML = '<span style="color:#dc2626;">Ошибка: ' + escapeHtml(err.message) + '</span>';
+        renderBotError(botDiv, 'Ошибка flow. Попробуйте ещё раз.', text);
     }
     scrollBottom();
+}
+
+form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const text = input.value.trim();
+    if (!text) return;
+    await submitChatMessage(text);
 });
 
 /* ---- Переименование (inline) / удаление чата ---- */

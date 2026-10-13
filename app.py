@@ -2,12 +2,25 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
+import config
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy import select, text
 
 from database import AsyncSessionLocal, Base, engine
-from models import Group, User
+from models import (
+    AgentFavorite,
+    AgentGroup,
+    Chat,
+    ChatMessage,
+    EmbedNonce,
+    FlowPublication,
+    Group,
+    Integration,
+    LLMRequestLog,
+    User,
+    UserGroup,
+)
 
 from session import get_current_user
 from routers import admin, auth, chat, public, embed, api
@@ -52,18 +65,58 @@ async def _seed_defaults():
                 logger.info("Создана системная группа: %s", gid)
         await db.commit()
 
+
+async def _seed_demo_mode_publication():
+    """Создаёт один демо-flow для локального UI-проверки без Langflow."""
+    if not config.ENABLE_DEMO_MODE:
+        return
+
+    async with AsyncSessionLocal() as db:
+        existing = await db.execute(
+            select(FlowPublication).where(FlowPublication.flow_id == config.DEMO_FLOW_ID)
+        )
+        row = existing.scalar_one_or_none()
+        if row is None:
+            row = FlowPublication(
+                flow_id=config.DEMO_FLOW_ID,
+                is_published=True,
+                override_name=config.DEMO_FLOW_NAME,
+                override_description=config.DEMO_FLOW_DESCRIPTION,
+            )
+            db.add(row)
+        else:
+            row.is_published = True
+            row.override_name = row.override_name or config.DEMO_FLOW_NAME
+            row.override_description = row.override_description or config.DEMO_FLOW_DESCRIPTION
+
+        await db.commit()
+
+
+async def _apply_migrations() -> None:
+    """Запускает каждую миграцию в отдельной транзакции.
+
+    Это важно: если одна миграция падает, последующая не должна находиться
+    в уже "забитой" транзакции. Новый connection per statement устраняет
+    состояние "transaction aborted".
+    """
+    for stmt in MIGRATIONS:
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(text(stmt))
+        except Exception as e:
+            logger.warning("Миграция пропущена (%s): %s", stmt, e)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        for stmt in MIGRATIONS:
-            try:
-                await conn.execute(text(stmt))
-            except Exception as e:
-                logger.warning("Миграция пропущена (%s): %s", stmt, e)
+
+    await _apply_migrations()
 
     # Засев системных групп ПОСЛЕ создания таблиц
     await _seed_defaults()
+    await _seed_demo_mode_publication()
 
     logger.info("Схема БД инициализирована, системные группы проверены")
     yield
@@ -73,7 +126,21 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Langflow Agent Manager", lifespan=lifespan)
 
-PUBLIC_PATHS = {"/auth/login", "/auth/logout", "/favicon.ico"}
+PUBLIC_PATHS = {"/auth/login", "/auth/logout", "/favicon.ico", "/health"}
+
+
+@app.get("/health")
+async def health_check():
+    try:
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+        return {"status": "ok", "database": "up"}
+    except Exception as exc:
+        logger.warning("Health check failed: %s", exc)
+        return JSONResponse(
+            {"status": "down", "database": "down", "error": str(exc)},
+            status_code=503,
+        )
 
 
 @app.middleware("http")

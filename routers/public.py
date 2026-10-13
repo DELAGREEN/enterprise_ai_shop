@@ -17,6 +17,8 @@ router = APIRouter()
 @router.get("/", response_class=HTMLResponse)
 async def index(request: Request, db: AsyncSession = Depends(get_db)):
     user = get_current_user(request)
+    if not user or "username" not in user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
     username = user["username"]
 
     # 👇 Какие flow доступны пользователю по группам
@@ -97,6 +99,8 @@ async def toggle_favorite(
     db: AsyncSession = Depends(get_db),
 ):
     user = get_current_user(request)
+    if not user or "username" not in user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
     username = user["username"]
 
     # 👇 RBAC-проверка вместо ручной проверки публикации

@@ -11,6 +11,10 @@ APP_LOGO_URL = os.getenv("APP_LOGO_URL", "").strip()
 # --- Langflow ---
 LANGFLOW_URL = os.getenv("LANGFLOW_URL", "")
 LANGFLOW_API_KEY = os.getenv("LANGFLOW_API_KEY", "")
+ENABLE_DEMO_MODE = os.getenv("ENABLE_DEMO_MODE", "false").lower() in ("1", "true", "yes", "on")
+DEMO_FLOW_ID = os.getenv("DEMO_FLOW_ID", "demo-flow")
+DEMO_FLOW_NAME = os.getenv("DEMO_FLOW_NAME", "Demo assistant")
+DEMO_FLOW_DESCRIPTION = os.getenv("DEMO_FLOW_DESCRIPTION", "Демо-агент для тестирования интерфейса без Langflow.")
 
 # --- PostgreSQL ---
 DATABASE_URL = os.getenv(

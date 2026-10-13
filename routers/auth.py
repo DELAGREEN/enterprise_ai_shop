@@ -1,5 +1,6 @@
 import logging
 from datetime import datetime
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -21,10 +22,20 @@ router = APIRouter()
 
 
 def _safe_next(next_url: str | None) -> str:
-    """Не позволяем редиректить на внешние домены."""
-    if not next_url or not next_url.startswith("/"):
+    """Не позволяем редиректить на внешние домены или protocol-relative ссылки."""
+    if not next_url:
         return "/"
-    return next_url
+
+    candidate = next_url.strip()
+    if not candidate or "\n" in candidate or "\r" in candidate:
+        return "/"
+
+    parsed = urlsplit(candidate)
+    if parsed.scheme or parsed.netloc or candidate.startswith("//"):
+        return "/"
+    if not candidate.startswith("/"):
+        return "/"
+    return candidate
 
 
 async def _sync_user(db: AsyncSession, username: str) -> User:
@@ -38,7 +49,6 @@ async def _sync_user(db: AsyncSession, username: str) -> User:
     if user is None:
         user = User(username=username)
         db.add(user)
-        # системному админу группу не назначаем
         if username != ADMIN_USERNAME:
             db.add(UserGroup(username=username, group_id="users"))
         logger.info("Зарегистрирован новый пользователь: %s", username)
@@ -46,8 +56,6 @@ async def _sync_user(db: AsyncSession, username: str) -> User:
         user.last_login = datetime.utcnow()
         logger.info("Повторный вход: %s", username)
 
-    # flush, чтобы FK-связи были видны в этой же транзакции;
-    # commit делаем в вызывающем коде после всех операций.
     await db.flush()
     return user
 
@@ -65,7 +73,6 @@ async def _user_is_local_admin(db: AsyncSession, username: str) -> bool:
 
 @router.get("/auth/login", response_class=HTMLResponse)
 async def login_page(request: Request):
-    # Уже залогинен — можно сразу отправлять дальше
     if get_current_user(request):
         return RedirectResponse(_safe_next(request.query_params.get("next")), 302)
     return templates.TemplateResponse(
@@ -86,10 +93,7 @@ async def login_submit(
     next: str = Form(""),
     db: AsyncSession = Depends(get_db),
 ):
-    # BREAK-GLASS: системный админ входит ТОЛЬКО по паролю из .env.
-    # LDAP для этого имени игнорируется. is_disabled не блокирует вход.
     if username == ADMIN_USERNAME:
-        # Системный админ отключён через .env
         if not SYSTEM_ADMIN_ENABLED:
             logger.warning("Попытка входа, но учётка отключена через .env")
             return templates.TemplateResponse(
@@ -111,8 +115,6 @@ async def login_submit(
 
         user_row = await _sync_user(db, username)
 
-        # is_disabled в БД больше не блокирует break-glass.
-        # Источник правды — .env. Но если флаг в БД стоит, сбрасываем — приводим к согласованности.
         if user_row.is_disabled:
             user_row.is_disabled = False
             logger.info("Сброшен is_disabled в БД для системного администратора (включён через .env)")
@@ -132,7 +134,6 @@ async def login_submit(
         )
         return resp
 
-    # Обычные пользователи — через LDAP, как раньше
     result = await run_in_threadpool(authenticate_ldap, username, password)
 
     if not result:
@@ -144,7 +145,6 @@ async def login_submit(
 
     user_row = await _sync_user(db, username)
 
-    # блокировка отключённых пользователей
     if user_row.is_disabled:
         await db.rollback()
         logger.warning("Отклонён вход отключённого пользователя: %s", username)

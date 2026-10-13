@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -187,7 +187,26 @@ async def chat_send(
     # Вызываем Langflow. session_id = chat.id → контекст изолирован по чату.
     client = LangflowClient()
     data = await client.run_flow(flow_id, text_in, session_id=chat.id)
+
+    if not data or isinstance(data, dict) and "error" in data:
+        logger.warning("Langflow failed for chat %s/%s: %s", flow_id, chat_id, data)
+        return {
+            "status": "error",
+            "error": "Ошибка flow. Попробуйте ещё раз.",
+            "retryable": True,
+            "title": chat.title,
+        }
+
     raw_text = extract_output_text(data)
+    if not raw_text or str(raw_text).lower().startswith("ошибка langflow:"):
+        logger.warning("Langflow returned no usable text for chat %s/%s", flow_id, chat_id)
+        return {
+            "status": "error",
+            "error": "Ошибка flow. Попробуйте ещё раз.",
+            "retryable": True,
+            "title": chat.title,
+        }
+
     answer, thinking = parse_thinking(raw_text)
 
     # Сохраняем ответ
@@ -216,7 +235,7 @@ async def chat_send(
 
     await db.commit()
 
-    return {"text": answer, "thinking": thinking, "title": chat.title}
+    return {"status": "ok", "text": answer, "thinking": thinking, "title": chat.title}
 
 
 class RenamePayload(BaseModel):
