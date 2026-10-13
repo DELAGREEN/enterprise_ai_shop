@@ -43,7 +43,7 @@ services:
       - langflow-network
 
   langflow:
-    image: langflowai/langflow:1.11.0
+    image: langflowai/langflow:latest
     container_name: langflow
     restart: always
     #ports:
