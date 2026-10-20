@@ -189,15 +189,16 @@ services:
             - "--port"
             - "8081"
             - "--dtype"
-            - "bfloat16"
-            #- "bfloat8"                    
-            - "--enforce-eager"             # СПАСИТЕЛЬНЫЙ ФЛАГ: отключает компилятор графов
+            #- "bfloat16"
+            #- "bfloat8" 
+            - "auto"                   
+            #- "--enforce-eager"             # СПАСИТЕЛЬНЫЙ ФЛАГ: отключает компилятор графов
             - "--gpu-memory-utilization"
             - "0.90"
             - "--max-model-len"
             - "16384"                        # Длина контекста
             - "--max-num-seqs"
-            - "128"                         # Количество одномоментных запросов
+            - "16"                         # Количество одномоментных запросов
             - "--enable-auto-tool-choice"
             - "--tool-call-parser" 
             #- "llm_planning"
@@ -247,14 +248,15 @@ services:
             #- "--task"
             #- "embed"
             - "--dtype"
-            - "bfloat16"
+            #- "bfloat16"
+            - "auto"
             - "--max-model-len"
-            - "2048"                # сильно уменьшаем (эмбеддингу не нужен длинный контекст)
+            - "1024"                # сильно уменьшаем (эмбеддингу не нужен длинный контекст)
             - "--gpu-memory-utilization"
             - "0.10"                # резервируем совсем мало (10% от 23.5 ГБ ≈ 2.3 ГБ)
             #- "--enforce-eager"     # экономит память за счёт отключения оптимизаций
             - "--max-num-seqs"
-            - "128"                  # уменьшаем параллелизм
+            - "16"                  # уменьшаем параллелизм
     healthcheck:                           
       test: ["CMD", "curl", "-f", "http://localhost:8080/v1/models"]
       interval: 30s
