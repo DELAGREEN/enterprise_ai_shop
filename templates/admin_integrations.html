@@ -3,6 +3,22 @@
 {% block admin_header %}API и Embed интеграции{% endblock %}
 
 {% block admin_content %}
+<style>
+    .code-snippet {
+        background: #1f2937; color: #f9fafb; padding: 12px 14px;
+        border-radius: 8px; font-family: ui-monospace, monospace;
+        font-size: .82rem; overflow-x: auto; white-space: pre;
+        line-height: 1.5;
+    }
+    .bi-warn {
+        margin-top: 12px; padding: 12px;
+        background: #fef3c7; border-left: 4px solid #f59e0b;
+        border-radius: 6px; font-size: .85rem; color: #78350f;
+    }
+    .actions-cell { display: flex; gap: 4px; flex-wrap: wrap; }
+    .actions-cell button { white-space: nowrap; }
+</style>
+
 <div style="margin-bottom: 16px;">
     <button id="createBtn">+ Создать интеграцию</button>
 </div>
@@ -16,7 +32,7 @@
                 <th>Способы входа</th>
                 <th>API Key</th>
                 <th>Статус</th>
-                <th>Действия</th>
+                <th style="width: 320px;">Действия</th>
             </tr>
         </thead>
         <tbody>
@@ -44,18 +60,37 @@
                     {% endif %}
                 </td>
                 <td>
-                    <button onclick="toggle('{{ i.id }}', {{ 'false' if i.is_active else 'true' }})">
-                        {% if i.is_active %}⏸{% else %}▶{% endif %}
-                    </button>
-                    <button class="danger" onclick="del('{{ i.id }}', '{{ i.name }}')">🗑</button>
+                    <div class="actions-cell">
+                        <button type="button" class="secondary btn-bi-code"
+                                data-id="{{ i.id }}"
+                                data-flow="{{ i.flow_id }}">Код для BI</button>
+                        <button type="button" class="secondary btn-snippet"
+                                data-id="{{ i.id }}"
+                                data-flow="{{ i.flow_id }}">Snippet</button>
+                        <button type="button" class="btn-toggle"
+                                data-id="{{ i.id }}"
+                                data-active="{{ '1' if i.is_active else '0' }}">
+                            {% if i.is_active %}⏸{% else %}▶{% endif %}
+                        </button>
+                        <button type="button" class="danger btn-del"
+                                data-id="{{ i.id }}"
+                                data-name="{{ i.name }}">🗑</button>
+                    </div>
                 </td>
             </tr>
         {% endfor %}
+        {% if not integrations %}
+            <tr>
+                <td colspan="6" class="muted" style="text-align:center; padding:20px;">
+                    Ещё нет ни одной интеграции. Создайте первую →
+                </td>
+            </tr>
+        {% endif %}
         </tbody>
     </table>
 </div>
 
-{# Модалка создания #}
+{# ─── Модалка создания ─── #}
 <div id="createModal" class="modal-backdrop" style="display:none;">
     <div class="modal" style="width: 600px;">
         <h3>Новая интеграция</h3>
@@ -81,7 +116,7 @@
                 <label><input type="checkbox" name="auth" value="api_key" checked> 🔑 API-ключ</label>
                 <label><input type="checkbox" name="auth" value="ldap"> 🧑 LDAP (Basic)</label>
                 <label><input type="checkbox" name="auth" value="kerberos"> 🎫 Kerberos</label>
-                <label><input type="checkbox" name="auth" value="internal"> 👤 Внутренний пользователь</label>
+                <label><input type="checkbox" name="auth" value="internal"> 👤 Внутренний</label>
                 <label><input type="checkbox" name="auth" value="embed_hmac"> 🌐 Embed (HMAC)</label>
             </div>
             <div class="muted" style="font-size:.8rem; margin-top:4px;">
@@ -91,17 +126,17 @@
 
         <div class="field">
             <label>Разрешённые origins (для embed, опционально)</label>
-            <input type="text" id="fOrigins" placeholder="https://acme.com,https://app.acme.com">
+            <input type="text" id="fOrigins" placeholder="https://acme.com">
         </div>
 
         <div class="modal-actions">
-            <button class="secondary" id="cancelBtn">Отмена</button>
-            <button id="confirmBtn">Создать</button>
+            <button type="button" class="secondary" id="cancelBtn">Отмена</button>
+            <button type="button" id="confirmBtn">Создать</button>
         </div>
     </div>
 </div>
 
-{# Модалка "сохраните секреты" #}
+{# ─── Модалка "сохраните секреты" ─── #}
 <div id="resultModal" class="modal-backdrop" style="display:none;">
     <div class="modal">
         <h3>⚠️ Сохраните секреты — показываются один раз</h3>
@@ -111,23 +146,90 @@
         </div>
     </div>
 </div>
+
+{# ─── Модалка snippet (серверный Python) ─── #}
+<div id="snippetModal" class="modal-backdrop" style="display:none;">
+    <div class="modal" style="width: 720px; max-width: 95vw;">
+        <h3>Snippet для серверной интеграции</h3>
+        <p class="muted" style="font-size:.85rem;">
+            Для бэкенда портала. Секрет нужен для подписи URL.
+        </p>
+        <div class="code-snippet" id="snippetCode"></div>
+        <div class="modal-actions" style="margin-top:12px;">
+            <button type="button" class="secondary" id="snippetCopy">Скопировать</button>
+            <button type="button" id="snippetClose">Закрыть</button>
+        </div>
+    </div>
+</div>
+
+{# ─── Модалка "Код для BI" ─── #}
+<div id="biCodeModal" class="modal-backdrop" style="display:none;">
+    <div class="modal" style="width: 900px; max-width: 95vw;">
+        <h3>Код для встраивания в BI</h3>
+
+        <div class="field">
+            <label>Секрет интеграции (если сохранили)</label>
+            <input type="password" id="biSecretInput"
+                   placeholder="Оставьте пустым — будет плейсхолдер">
+            <div class="muted" style="font-size:.8rem; margin-top:4px;">
+                Секрет показывается <b>один раз</b> при создании.
+            </div>
+        </div>
+
+        <div class="field">
+            <label>Имя пользователя (USER)</label>
+            <input type="text" id="biUserInput" value="BI" placeholder="BI">
+        </div>
+
+        <div class="code-snippet" id="biCodeOutput"
+             style="max-height: 400px; overflow-y: auto;"></div>
+
+        <div class="bi-warn">
+            ⚠️ <b>Безопасность:</b> <code>SECRET</code> в клиентском JS —
+            любой пользователь BI извлечёт его через F12 и подпишет URL от чужого имени.
+            <b>Для прода:</b> перенесите подпись на бэкенд BI.
+        </div>
+
+        <div class="modal-actions">
+            <button type="button" class="secondary" id="biCopyBtn">Копировать</button>
+            <button type="button" id="biCloseBtn">Закрыть</button>
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
 <script>
-document.getElementById('createBtn').onclick = () => {
-    document.getElementById('createModal').style.display = 'flex';
-};
-document.getElementById('cancelBtn').onclick = () => {
-    document.getElementById('createModal').style.display = 'none';
-};
+const BASE_URL = {{ base_url | tojson }};
 
-document.getElementById('confirmBtn').onclick = async () => {
+/* ═══════════════════════════════════════════════════════════
+   СОЗДАНИЕ
+   ═══════════════════════════════════════════════════════════ */
+const createModal = document.getElementById('createModal');
+const resultModal = document.getElementById('resultModal');
+
+document.getElementById('createBtn').addEventListener('click', () => {
+    document.getElementById('fName').value = '';
+    document.getElementById('fFlow').value = '';
+    document.getElementById('fOrigins').value = '';
+    // вернуть чекбоксы в дефолт (api_key)
+    document.querySelectorAll('input[name=auth]').forEach(cb => {
+        cb.checked = (cb.value === 'api_key');
+    });
+    createModal.style.display = 'flex';
+});
+
+document.getElementById('cancelBtn').addEventListener('click', () => {
+    createModal.style.display = 'none';
+});
+
+document.getElementById('confirmBtn').addEventListener('click', async () => {
     const name = document.getElementById('fName').value.trim();
     const flow_id = document.getElementById('fFlow').value;
     const origins = document.getElementById('fOrigins').value.trim();
-    const methods = Array.from(document.querySelectorAll('input[name=auth]:checked'))
-        .map(cb => cb.value);
+    const methods = Array.from(
+        document.querySelectorAll('input[name=auth]:checked')
+    ).map(cb => cb.value);
 
     if (!name) return alert('Введите название');
     if (!flow_id) return alert('Выберите агента');
@@ -146,15 +248,224 @@ document.getElementById('confirmBtn').onclick = async () => {
         if (!res.ok) throw new Error(await res.text());
         const d = await res.json();
 
-        document.getElementById('createModal').style.display = 'none';
-        document.getElementById('resultModal').style.display = 'flex';
+        createModal.style.display = 'none';
+        resultModal.style.display = 'flex';
 
         let html = '';
-        html += `<p><b>Integration ID:</b><br><code>${d.id}</code></p>`;
-        if (d.api_key) html += `<p><b>API Key:</b><br><code>${d.api_key}</code></p>`;
-        html += `<p><b>HMAC Secret:</b><br><code>${d.secret}</code></p>`;
+        html += '<p><b>Integration ID:</b><br><code>' + d.id + '</code></p>';
+        if (d.api_key) html += '<p><b>API Key:</b><br><code>' + d.api_key + '</code></p>';
+        html += '<p><b>HMAC Secret:</b><br><code>' + d.secret + '</code></p>';
         document.getElementById('resultContent').innerHTML = html;
     } catch (e) { alert('Ошибка: ' + e.message); }
-};
+});
+
+/* ═══════════════════════════════════════════════════════════
+   TOGGLE / DELETE
+   ═══════════════════════════════════════════════════════════ */
+document.querySelectorAll('.btn-toggle').forEach(btn => {
+    btn.addEventListener('click', async () => {
+        const id = btn.dataset.id;
+        const is_active = btn.dataset.active !== '1';
+        const res = await fetch('/admin/integrations/toggle', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({id, is_active})
+        });
+        if (res.ok) location.reload();
+        else alert('Ошибка: ' + res.status);
+    });
+});
+
+document.querySelectorAll('.btn-del').forEach(btn => {
+    btn.addEventListener('click', async () => {
+        if (!confirm('Удалить интеграцию «' + btn.dataset.name + '»?')) return;
+        const res = await fetch('/admin/integrations/delete', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({id: btn.dataset.id})
+        });
+        if (res.ok) location.reload();
+        else alert('Ошибка: ' + res.status);
+    });
+});
+
+/* ═══════════════════════════════════════════════════════════
+   SNIPPET (Python для бэкенда)
+   ═══════════════════════════════════════════════════════════ */
+const snippetModal = document.getElementById('snippetModal');
+const snippetCode  = document.getElementById('snippetCode');
+
+document.querySelectorAll('.btn-snippet').forEach(btn => {
+    btn.addEventListener('click', () => {
+        const id = btn.dataset.id;
+        const flow = btn.dataset.flow;
+        const lines = [
+            '# Python: генерация подписанного iframe URL',
+            'import hmac, hashlib, secrets, time',
+            '',
+            'INTEGRATION_ID = "' + id + '"',
+            'SECRET         = "<ВАШ_СЕКРЕТ>"',
+            'BASE_URL       = "' + BASE_URL + '"',
+            'FLOW_ID        = "' + flow + '"',
+            '',
+            'def build_iframe_url(user: str, ttl: int = 300) -> str:',
+            '    expires_at = int(time.time()) + ttl',
+            '    nonce = secrets.token_hex(16)',
+            '    msg = f"{user}|{expires_at}|{nonce}"',
+            '    sig = hmac.new(SECRET.encode(), msg.encode(), hashlib.sha256).hexdigest()',
+            '    return (f"{BASE_URL}/embed/chat/{FLOW_ID}"',
+            '            f"?i={INTEGRATION_ID}&u={user}&e={expires_at}&n={nonce}&s={sig}")',
+        ];
+        snippetCode.textContent = lines.join('\n');
+        snippetModal.style.display = 'flex';
+    });
+});
+
+document.getElementById('snippetClose').addEventListener('click', () => {
+    snippetModal.style.display = 'none';
+});
+document.getElementById('snippetCopy').addEventListener('click', () => {
+    navigator.clipboard.writeText(snippetCode.textContent);
+    const b = document.getElementById('snippetCopy');
+    b.textContent = '✓ Скопировано';
+    setTimeout(() => b.textContent = 'Скопировать', 1500);
+});
+
+/* ═══════════════════════════════════════════════════════════
+   КОД ДЛЯ BI
+   ═══════════════════════════════════════════════════════════ */
+const biCodeModal   = document.getElementById('biCodeModal');
+const biSecretInput = document.getElementById('biSecretInput');
+const biUserInput   = document.getElementById('biUserInput');
+const biCodeOutput  = document.getElementById('biCodeOutput');
+
+let biCurrentId   = null;
+let biCurrentFlow = null;
+
+function generateBICode(integrationId, flowId, baseUrl, secret, user) {
+    const secretValue = secret || '__ВСТАВЬТЕ_СЕКРЕТ_ИНТЕГРАЦИИ__';
+
+    const lines = [
+        '// ─── Embed-виджет для BI ─────────────────────────────',
+        'const widget = document.createElement("div");',
+        '',
+        'const INTEGRATION_ID = ' + JSON.stringify(integrationId) + ';',
+        'const SECRET         = ' + JSON.stringify(secretValue) + ';',
+        'const BASE_URL       = ' + JSON.stringify(baseUrl) + ';',
+        'const FLOW_ID        = ' + JSON.stringify(flowId) + ';',
+        'const USER           = ' + JSON.stringify(user || 'BI') + ';',
+        'const TTL            = 300;',
+        '',
+        'const toHex = function (buf) {',
+        '  return Array.prototype.map.call(new Uint8Array(buf), function (b) {',
+        '    return b.toString(16).padStart(2, "0");',
+        '  }).join("");',
+        '};',
+        '',
+        'const randomHex = function (n) {',
+        '  const a = new Uint8Array(n);',
+        '  crypto.getRandomValues(a);',
+        '  return toHex(a);',
+        '};',
+        '',
+        'async function hmacSha256Hex(secret, msg) {',
+        '  const enc = new TextEncoder();',
+        '  const key = await crypto.subtle.importKey(',
+        '    "raw", enc.encode(secret),',
+        '    { name: "HMAC", hash: "SHA-256" },',
+        '    false, ["sign"]',
+        '  );',
+        '  const sig = await crypto.subtle.sign("HMAC", key, enc.encode(msg));',
+        '  return toHex(sig);',
+        '}',
+        '',
+        'async function buildIframeUrl(user, ttl) {',
+        '  const expiresAt = Math.floor(Date.now() / 1000) + ttl;',
+        '  const nonce     = randomHex(16);',
+        '  const message   = user + "|" + expiresAt + "|" + nonce;',
+        '  const sig       = await hmacSha256Hex(SECRET, message);',
+        '  return BASE_URL + "/embed/chat/" + FLOW_ID',
+        '       + "?i=" + INTEGRATION_ID',
+        '       + "&u=" + encodeURIComponent(user)',
+        '       + "&e=" + expiresAt',
+        '       + "&n=" + nonce',
+        '       + "&s=" + sig;',
+        '}',
+        '',
+        'const iframe = document.createElement("iframe");',
+        'iframe.width        = "100%";',
+        'iframe.height       = "600";',
+        'iframe.frameBorder  = "0";',
+        'iframe.style.border = "0";',
+        'iframe.title        = "Chat";',
+        'widget.appendChild(iframe);',
+        '',
+        'buildIframeUrl(USER, TTL)',
+        '  .then(function (url) { iframe.src = url; })',
+        '  .catch(function (err) {',
+        '    console.error("[chat widget] не удалось подписать URL:", err);',
+        '    widget.dataset.state = "error";',
+        '    widget.textContent   = "Не удалось загрузить чат";',
+        '  });',
+        '',
+        'return widget;',
+    ];
+    return lines.join('\n');
+}
+
+function renderBICode() {
+    if (!biCurrentId || !biCurrentFlow) return;
+    biCodeOutput.textContent = generateBICode(
+        biCurrentId, biCurrentFlow, BASE_URL,
+        biSecretInput.value.trim(),
+        biUserInput.value.trim() || 'BI'
+    );
+}
+
+document.querySelectorAll('.btn-bi-code').forEach(btn => {
+    btn.addEventListener('click', () => {
+        biCurrentId   = btn.dataset.id;
+        biCurrentFlow = btn.dataset.flow;
+        biSecretInput.value = '';
+        biUserInput.value   = 'BI';
+        renderBICode();
+        biCodeModal.style.display = 'flex';
+        biSecretInput.focus();
+    });
+});
+
+biSecretInput.addEventListener('input', renderBICode);
+biUserInput.addEventListener('input', renderBICode);
+
+document.getElementById('biCopyBtn').addEventListener('click', () => {
+    navigator.clipboard.writeText(biCodeOutput.textContent);
+    const b = document.getElementById('biCopyBtn');
+    b.textContent = '✓ Скопировано';
+    setTimeout(() => b.textContent = 'Копировать', 1500);
+});
+
+document.getElementById('biCloseBtn').addEventListener('click', () => {
+    biCodeModal.style.display = 'none';
+    biCurrentId = null;
+    biCurrentFlow = null;
+});
+
+/* ═══════════════════════════════════════════════════════════
+   Закрытие модалок
+   ═══════════════════════════════════════════════════════════ */
+[createModal, resultModal, snippetModal, biCodeModal].forEach(m => {
+    m.addEventListener('click', (e) => {
+        if (e.target === m) m.style.display = 'none';
+    });
+});
+
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+        createModal.style.display = 'none';
+        resultModal.style.display = 'none';
+        snippetModal.style.display = 'none';
+        biCodeModal.style.display = 'none';
+    }
+});
 </script>
 {% endblock %}
