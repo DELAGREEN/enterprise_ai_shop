@@ -1,0 +1,102 @@
+services:
+  langflow:
+    build:
+      context: .
+      dockerfile: Dockerfile.custom-langflow
+    image: langflow-custom
+    container_name: langflow-custom
+    restart: always
+    #ports:
+    #  - "7860:7860"            
+    environment:
+      - DO_NOT_TRACK=true
+      - LANGFLOW_AUTHZ_AUDIT_ENABLED=true
+      # Таймзона
+      - TZ=Europe/Moscow
+      # Подключение к PostgreSQL
+      - LANGFLOW_DATABASE_URL=postgresql://langflow:langflow_password@langflow-db:5432/langflow
+      # Настройки суперпользователя (логин по умолчанию: langflow)
+      #- LANGFLOW_SUPERUSER
+      - LANGFLOW_SUPERUSER_PASSWORD=admin   # смени на свой
+      #Белый список защиты от SSR атак
+      - LANGFLOW_SSRF_ALLOWED_HOSTS=host.docker.internal,0.0.0.0/0
+      #A2A
+      - LANGFLOW_A2A_ENABLED=true
+      - LANGFLOW_CORS_ALLOW_ORIGINS=*   # разрешить все источники (небезопасно для продакшена)
+      # ЭТИ ДВЕ СТРОКИ СНИМАЮТ БЛОКИРОВКУ БЕЗОПАСНОСТИ ДЛЯ ТЕСТА
+      #- LANGFLOW_COMPONENTS_ALLOW_CUSTOM=true
+      #- LANGFLOW_COMPONENTS_VALIDATE_CUSTOM=false
+      #- LANGFLOW_SECRET_KEY=0d3a7fae637d1b852f91dfba363fa394b1bdb08910c1f22a6ff129a9e3010ea9
+      #- LANGFLOW_NEW_USER_IS_ACTIVE=False
+      #- LANGFLOW_ENABLE_SIGNUP=False
+      #- LANGFLOW_ENABLE_SUPERUSER_CLI=False
+      - LANGFLOW_ALLOW_CUSTOM_COMPONENTS=true
+      - LANGFLOW_AUTHZ_ENABLED=true
+      # При значении true пользователи, не являющиеся суперпользователями, по-прежнему могут просматривать 
+      # и использовать пользовательские компоненты в потоках, но они не могут создавать новые пользовательские 
+      # компоненты или редактировать код пользовательского компонента.При значении true пользователи, не являющиеся 
+      # суперпользователями, по-прежнему могут просматривать и использовать пользовательские компоненты в потоках, 
+      # но они не могут создавать новые пользовательские компоненты или редактировать код пользовательского компонента:
+      - LANGFLOW_CUSTOM_COMPONENT_ADMIN_ONLY=true # Не удалять
+      # Позволяет запускать кастомные компаненты 
+      - LANGFLOW_ALLOW_PUBLIC_CUSTOM_COMPONENTS=true
+      # Несколько воркеров работает на redis использует 0 и 1 очередь
+      #- LANGFLOW_WORKERS=3  # any value > 1
+      #- LANGFLOW_JOB_QUEUE_TYPE=redis
+      #- LANGFLOW_REDIS_QUEUE_URL=redis://your-redis-host:6379/1
+      # или конкретно ваш домен:
+      # - LANGFLOW_CORS_ALLOW_ORIGINS=http://192.168.0.169:7860,https://ваш-домен.ru
+      # Настройки, которые заставят внутреннего агента видеть твой vLLM по умолчанию:
+      #- OPENAI_API_KEY=           # Прописываем любой ключ-заглушку глобально
+      #- OPENAI_API_BASE=http://host.docker.internal:8081/v1 # Ссылка на контейнер vLLM
+      # Если встроенный агент по умолчанию ищет конкретное имя модели, можно жестко задать его:
+      #- OPENAI_MODEL_NAME=Qwen/Qwen3.5-9B
+      - LANGFLOW_UPLOAD_FOLDER=/app/uploads
+      - VLLM_API_KEY=dummy
+      #DOMAIN AUTHENTICATE
+      - LANGFLOW_AUTO_LOGIN=false
+      #- LANGFLOW_EXTERNAL_AUTH_ENABLED=true
+      #- LANGFLOW_EXTERNAL_AUTH_PROVIDER=keycloak
+      #- LANGFLOW_EXTERNAL_AUTH_PROVIDER_NAME=Keycloak
+      #- LANGFLOW_EXTERNAL_AUTH_TOKEN_HEADER=Authorization
+      # Keycloak realm endpoints (http is allowed for localhost in development)
+      #- LANGFLOW_EXTERNAL_AUTH_TRUSTED_JWT_DECODE=true
+      #- LANGFLOW_EXTERNAL_AUTH_JWKS_URL=http://127.0.0.1:8080/realms/langflow/protocol/openid-connect/certs
+      #- LANGFLOW_EXTERNAL_AUTH_ISSUER=http://localhost:8080/realms/langflow
+      #- LANGFLOW_EXTERNAL_AUTH_AUDIENCE=langflow-app
+      #XmDAsoUB8XX6ymOScb444WM1ev3yU37X
+      #http://localhost:8080/realms/langflow/protocol/openid-connect/auth?client_id=langflow-app&redirect_uri=http://localhost:7860&response_type=code&scope=openid
+      #-----Enable the Redis job queue-----
+      #- LANGFLOW_WORKERS=3  # any value > 1
+      #- LANGFLOW_JOB_QUEUE_TYPE=redis
+      #- LANGFLOW_REDIS_QUEUE_URL=redis://langflow-redis:6379/1
+      #- LANGFLOW_WORKER_TIMEOUT=600
+    
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+      - ./langflow/langflow_data:/app/.langflow   # для хранения файлов flows (если нужны)
+      - ./langflow/langflow_uploads:/app/uploads
+      - ./langflow/chroma_db:/app/chroma_db 
+      - ./langflow/faiss_db:/app/faiss_db  
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7860/health"]   # или /api/v1/health
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - langflow-network
+    dns:
+      - 10.0.0.181                              # основной корпоративный DNS
+      - 10.0.0.34                               # резервный (можно убрать, если он не нужен)
+      - 8.8.8.8
+    dns_search:
+      - company.local                           # опционально, чтобы писать просто "main" вместо "main.company.local"
+    extra_hosts: 
+    # http://host.docker.internal:11434                             
+    - "host.docker.internal:host-gateway"       # ← магическая строка
+
+networks:
+  langflow-network:
+    name: langflow-network

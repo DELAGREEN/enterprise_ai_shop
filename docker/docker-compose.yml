@@ -43,7 +43,8 @@ services:
       - langflow-network
 
   langflow:
-    image: langflowai/langflow:latest
+    #image: langflowai/langflow:latest
+    image: langflow-custom:latest
     container_name: langflow
     restart: always
     #ports:
@@ -115,7 +116,7 @@ services:
     volumes:
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro
-      - ./langflow/langflow_data:/app/.langflow   # для хранения файлов flows (если нужны)
+      - ./langflow/langflow_data:/app/data/.cache   # для хранения файлов flows (если нужны)
       - ./langflow/langflow_uploads:/app/uploads
       - ./langflow/chroma_db:/app/chroma_db 
       - ./langflow/faiss_db:/app/faiss_db
