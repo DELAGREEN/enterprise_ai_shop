@@ -111,12 +111,14 @@ services:
       #- LANGFLOW_WORKERS=3  # any value > 1
       #- LANGFLOW_JOB_QUEUE_TYPE=redis
       #- LANGFLOW_REDIS_QUEUE_URL=redis://langflow-redis:6379/1
-      #- LANGFLOW_WORKER_TIMEOUT=600
+      - LANGFLOW_WORKER_TIMEOUT=600
+      #- HF_HUB_OFFLINE=1
+      
     
     volumes:
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro
-      - ./langflow/langflow_data:/app/data/.cache   # для хранения файлов flows (если нужны)
+      - ./langflow/langflow_data:/app/data/
       - ./langflow/langflow_uploads:/app/uploads
       - ./langflow/chroma_db:/app/chroma_db 
       - ./langflow/faiss_db:/app/faiss_db
