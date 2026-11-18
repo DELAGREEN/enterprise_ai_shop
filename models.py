@@ -169,6 +169,7 @@ class ProcessingJob(Base):
     id = Column(String, primary_key=True)               # uuid hex
     flow_id = Column(String, nullable=False, index=True)
     user_id = Column(String, nullable=False, index=True)
+    chat_id = Column(String, nullable=True, index=True)  # чат, из которого загрузили файл
     job_type = Column(String, nullable=False)           # "chat" | "ingestion"
     status = Column(String, nullable=False, default="queued", index=True)
     # queued | running | completed | failed | timeout
@@ -177,6 +178,8 @@ class ProcessingJob(Base):
     input_text = Column(Text, nullable=True)            # для чата
     result = Column(Text, nullable=True)                # ответ / результат
     error = Column(Text, nullable=True)
+    # Результат уже перенесён в историю чата (защита от повторной записи)
+    history_saved = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     finished_at = Column(DateTime, nullable=True)

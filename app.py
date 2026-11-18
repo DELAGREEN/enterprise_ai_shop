@@ -6,7 +6,7 @@ from fastapi import FastAPI, Request
 import config
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse, RedirectResponse
-from sqlalchemy import select, text
+from sqlalchemy import and_, or_, select, text
 
 from database import AsyncSessionLocal, Base, engine
 from langflow_client import LangflowClient
@@ -55,6 +55,7 @@ MIGRATIONS = [
     " id VARCHAR PRIMARY KEY,"
     " flow_id VARCHAR NOT NULL,"
     " user_id VARCHAR NOT NULL,"
+    " chat_id VARCHAR,"
     " job_type VARCHAR NOT NULL,"
     " status VARCHAR NOT NULL DEFAULT 'queued',"
     " langflow_job_id VARCHAR,"
@@ -62,10 +63,13 @@ MIGRATIONS = [
     " input_text TEXT,"
     " result TEXT,"
     " error TEXT,"
+    " history_saved BOOLEAN NOT NULL DEFAULT FALSE,"
     " created_at TIMESTAMP NOT NULL DEFAULT NOW(),"
     " updated_at TIMESTAMP,"
     " finished_at TIMESTAMP"
     ")",
+    "ALTER TABLE processing_jobs ADD COLUMN IF NOT EXISTS chat_id VARCHAR",
+    "ALTER TABLE processing_jobs ADD COLUMN IF NOT EXISTS history_saved BOOLEAN NOT NULL DEFAULT FALSE",
     "ALTER TABLE flow_publications ADD COLUMN IF NOT EXISTS supports_files BOOLEAN NOT NULL DEFAULT FALSE",
 ]
 
@@ -131,19 +135,39 @@ async def _poll_jobs():
             async with AsyncSessionLocal() as db:
                 res = await db.execute(
                     select(ProcessingJob).where(
-                        ProcessingJob.status.in_(["queued", "running"]),
-                        ProcessingJob.langflow_job_id.isnot(None),
+                        or_(
+                            # Активные задачи — обновляем статус из Langflow
+                            and_(
+                                ProcessingJob.status.in_(["queued", "running"]),
+                                ProcessingJob.langflow_job_id.isnot(None),
+                            ),
+                            # Завершённые, но ещё не попавшие в историю чата.
+                            # Такой job мог закрыть другой процесс/воркер,
+                            # поэтому дозаписываем историю здесь.
+                            and_(
+                                ProcessingJob.status.in_(
+                                    ["completed", "failed", "timeout"]
+                                ),
+                                ProcessingJob.history_saved.is_(False),
+                                ProcessingJob.chat_id.isnot(None),
+                            ),
+                        )
                     )
                 )
                 job_rows = list(res.scalars().all())
                 client = LangflowClient()
                 for job in job_rows:
                     try:
-                        lf = await client.get_job_status(job.langflow_job_id)
-                        if jobs.apply_job_status(job, lf):
+                        changed = False
+                        if job.status in ("queued", "running") and job.langflow_job_id:
+                            lf = await client.get_job_status(job.langflow_job_id)
+                            changed = jobs.apply_job_status(job, lf)
+                        if await jobs.save_job_history(db, job):
+                            changed = True
+                        if changed:
                             await db.commit()
                     except Exception as exc:
-                        logger.debug("Не удалось обновить job %s: %s", job.id, exc)
+                        logger.warning("Не удалось обновить job %s: %s", job.id, exc)
         except asyncio.CancelledError:
             raise
         except Exception as exc:

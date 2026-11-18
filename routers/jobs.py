@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
 from langflow_client import LangflowClient, extract_error_text, extract_output_text
-from models import ProcessingJob
+from models import Chat, ChatMessage, LLMRequestLog, ProcessingJob
 from session import get_current_user
 
 logger = logging.getLogger(__name__)
@@ -85,6 +85,70 @@ def apply_job_status(job: ProcessingJob, lf: dict) -> bool:
     return changed
 
 
+async def save_job_history(db: AsyncSession, job: ProcessingJob) -> bool:
+    """Переносит результат файловой задачи в историю чата.
+
+    Файлы обрабатываются в фоне, поэтому ответ пишется в ``chat_messages``
+    не сразу, а когда задача дошла до финального статуса. ``history_saved``
+    защищает от повторной записи (поллер и опрос из UI могут сработать
+    почти одновременно).
+
+    Возвращает True, если что-то записали и нужен commit.
+    """
+    if not job.chat_id or job.history_saved:
+        return False
+    if job.status not in ("completed", "failed", "timeout"):
+        return False
+
+    chat = await db.get(Chat, job.chat_id)
+    job.history_saved = True
+    if chat is None:
+        logger.warning("Чат %s для job %s не найден", job.chat_id, job.id)
+        return True
+
+    answer = ""
+    if job.status == "completed" and job.result:
+        answer = job.result
+
+    if answer:
+        db.add(ChatMessage(chat_id=chat.id, role="assistant", content=answer))
+    else:
+        reason = job.error or f"Обработка завершилась со статусом {job.status}"
+        db.add(
+            ChatMessage(
+                chat_id=chat.id,
+                role="assistant",
+                content=f"⚠️ {reason}",
+            )
+        )
+
+    chat.updated_at = datetime.utcnow()
+
+    question = job.input_text or ""
+    if not question and job.input_files:
+        try:
+            names = ", ".join(
+                str(f.get("name") or "") for f in json.loads(job.input_files)
+            )
+        except Exception:
+            names = ""
+        question = f"📎 {names}" if names else ""
+
+    # Журнал не удаляется вместе с чатом — фиксируем запрос навсегда
+    db.add(
+        LLMRequestLog(
+            user_id=job.user_id,
+            flow_id=job.flow_id,
+            chat_id=chat.id,
+            chat_title=chat.title,
+            question=question or "—",
+            answer=answer or None,
+            thinking=None,
+        )
+    )
+    return True
+
+
 async def _create_job(
     db: AsyncSession,
     user_id: str,
@@ -92,11 +156,13 @@ async def _create_job(
     job_type: str,
     input_files: list | None = None,
     input_text: str | None = None,
+    chat_id: str | None = None,
 ) -> ProcessingJob:
     job = ProcessingJob(
         id=uuid.uuid4().hex,
         flow_id=flow_id,
         user_id=user_id,
+        chat_id=chat_id,
         job_type=job_type,
         status="queued",
         input_files=json.dumps(input_files, ensure_ascii=False) if input_files else None,
@@ -119,6 +185,21 @@ async def upload_and_run(
 ):
     if not user:
         raise HTTPException(401, "Not authenticated")
+
+    # Чат, из которого отправили файлы (None — служебная страница ingestion).
+    # Проверяем владельца, иначе можно было бы писать в чужую историю.
+    chat: Chat | None = None
+    if session_id:
+        chat_res = await db.execute(
+            select(Chat).where(
+                Chat.id == session_id,
+                Chat.flow_id == flow_id,
+                Chat.user_id == user["username"],
+            )
+        )
+        chat = chat_res.scalar_one_or_none()
+        if chat is None:
+            raise HTTPException(status_code=404, detail="Чат не найден")
 
     client = LangflowClient()
 
@@ -191,13 +272,31 @@ async def upload_and_run(
         logger.error("Langflow не вернул job_id: %s", resp)
         raise HTTPException(status_code=502, detail="Langflow не вернул job_id")
 
-    # 4. Сохраняем задачу в БД
+    # 4. Сохраняем задачу в БД и сразу — сообщение пользователя в историю чата
     job = await _create_job(
         db, user["username"], flow_id, "ingestion",
         input_files=uploaded,
         input_text=input_value,
+        chat_id=chat.id if chat else None,
     )
     job.langflow_job_id = langflow_job_id
+
+    if chat is not None:
+        file_names = ", ".join(up["name"] for up in uploaded)
+        user_text = (message or "").strip()
+        if user_text and file_names:
+            content = f"{user_text}\n\n📎 {file_names}"
+        else:
+            content = user_text or f"📎 {file_names}"
+
+        # Авто-название чата по первому сообщению (как в обычной отправке)
+        if chat.title == "Новый чат":
+            first_line = (user_text or file_names).split("\n")[0].strip()
+            chat.title = first_line[:60] or "Новый чат"
+
+        db.add(ChatMessage(chat_id=chat.id, role="user", content=content))
+        chat.updated_at = datetime.utcnow()
+
     await db.commit()
 
     return {
@@ -205,6 +304,7 @@ async def upload_and_run(
         "langflow_job_id": langflow_job_id,
         "status": "queued",
         "files": uploaded,
+        "chat_title": chat.title if chat else None,
     }
 
 
@@ -220,15 +320,27 @@ async def get_job(
     if job.user_id != user["username"] and not user.get("is_admin"):
         raise HTTPException(403, "Access denied")
 
-    # Если задача ещё активна — обновляем статус из Langflow
+    # Обновляем статус из Langflow, пока задача активна
     if job.status in ("queued", "running") and job.langflow_job_id:
         try:
             client = LangflowClient()
             lf = await client.get_job_status(job.langflow_job_id)
-            if apply_job_status(job, lf):
+            changed = apply_job_status(job, lf)
+            if await save_job_history(db, job):
+                changed = True
+            if changed:
                 await db.commit()
         except Exception as e:
             logger.warning("Не удалось обновить статус job %s: %s", job_id, e)
+
+    # Страховка: если задача уже завершилась, а история ещё не записана
+    # (например, поллер не успел или приложение перезапускалось)
+    elif job.status in ("completed", "failed", "timeout"):
+        try:
+            if await save_job_history(db, job):
+                await db.commit()
+        except Exception as e:
+            logger.warning("Не удалось сохранить историю job %s: %s", job_id, e)
 
     return {
         "job_id": job.id,
@@ -237,6 +349,7 @@ async def get_job(
         "input_files": json.loads(job.input_files) if job.input_files else [],
         "result": job.result,
         "error": job.error,
+        "chat_id": job.chat_id,
         "created_at": job.created_at.isoformat(),
         "finished_at": job.finished_at.isoformat() if job.finished_at else None,
     }

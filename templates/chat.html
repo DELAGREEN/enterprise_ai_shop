@@ -727,6 +727,13 @@ async function submitWithFiles(files, text) {
         if (!res.ok) throw new Error('HTTP ' + res.status + ': ' + (await res.text()));
         const data = await res.json();
         jobId = data.job_id;
+
+        // Авто-название чата приходит с сервера — обновляем сайдбар
+        const activeItem = document.querySelector('.chat-item.active');
+        if (activeItem && data.chat_title) {
+            activeItem.dataset.title = data.chat_title;
+            activeItem.querySelector('.title').textContent = data.chat_title;
+        }
     } catch (err) {
         renderBotError(botDiv, 'Ошибка загрузки файлов: ' + err.message, null);
         return;
