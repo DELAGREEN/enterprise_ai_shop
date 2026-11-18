@@ -1,0 +1,76 @@
+<!-- templates/admin_ingestion.html -->
+{% extends "admin_base.html" %}
+{% block admin_content %}
+<h1>Загрузка файлов в Qdrant</h1>
+
+<form id="ingestForm" enctype="multipart/form-data">
+  <label>Flow (интеграция в Qdrant):
+    <select name="flow_id" id="flowSelect">
+      {% for f in flow_options %}
+      <option value="{{ f.id }}">{{ f.name }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  {% if not flow_options %}
+  <p class="muted">Нет доступных flow. Отметьте «Поддерживает загрузку файлов» в разделе публикаций.</p>
+  {% endif %}
+  <label>Файлы (можно несколько):
+    <input type="file" name="files" id="filesInput" multiple>
+  </label>
+  <button type="submit">Загрузить и запустить</button>
+</form>
+
+<div id="jobsTable"></div>
+
+<script>
+document.getElementById('ingestForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const form = new FormData();
+  form.append('flow_id', document.getElementById('flowSelect').value);
+  for (const f of document.getElementById('filesInput').files) {
+    form.append('files', f);
+  }
+
+  const res = await fetch('/api/upload-and-run', {
+    method: 'POST',
+    body: form,
+    credentials: 'include',
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    alert('Ошибка: ' + (data.detail || ('HTTP ' + res.status)));
+    return;
+  }
+  alert('Задача создана: ' + (data.job_id || data.langflow_job_id));
+  refreshJobs();
+});
+
+async function refreshJobs() {
+  const res = await fetch('/api/jobs?limit=50', { credentials: 'include' });
+  if (!res.ok) return;
+  const jobs = await res.json();
+  if (!Array.isArray(jobs)) return;
+  let html = '<table><thead><tr><th>ID</th><th>Flow</th><th>Пользователь</th><th>Статус</th><th>Создана</th><th>Завершена</th></tr></thead><tbody>';
+  for (const j of jobs) {
+    html += `<tr>
+      <td><code>${j.job_id.slice(0,8)}…</code></td>
+      <td><code>${j.flow_id.slice(0,8)}…</code></td>
+      <td>${j.user_id}</td>
+      <td>${statusBadge(j.status)}</td>
+      <td>${j.created_at}</td>
+      <td>${j.finished_at || '—'}</td>
+    </tr>`;
+  }
+  html += '</tbody></table>';
+  document.getElementById('jobsTable').innerHTML = html;
+}
+
+function statusBadge(s) {
+  const colors = { queued: '#fef3c7', running: '#dbeafe', completed: '#d1fae5', failed: '#fee2e2', timeout: '#fee2e2' };
+  return `<span style="background:${colors[s]||'#eee'};padding:2px 8px;border-radius:999px;">${s}</span>`;
+}
+
+refreshJobs();
+setInterval(refreshJobs, 10000);
+</script>
+{% endblock %}

@@ -139,6 +139,12 @@ async def chat_page(
     )
     messages = list(msgs_res.scalars().all())
 
+    pub_res = await db.execute(
+    select(FlowPublication).where(FlowPublication.flow_id == flow_id)
+    )
+    pub = pub_res.scalar_one_or_none()
+    supports_files = bool(pub and pub.supports_files)
+
     return templates.TemplateResponse(
         "chat.html",
         {
@@ -149,6 +155,7 @@ async def chat_page(
             "chat": chat,
             "chats": chats,
             "messages": messages,
+            "supports_files": supports_files,
         },
     )
 

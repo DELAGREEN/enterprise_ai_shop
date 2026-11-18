@@ -47,8 +47,8 @@ services:
     image: langflow-custom:latest
     container_name: langflow
     restart: always
-    #ports:
-    #  - "7860:7860"            
+    ports:
+      - "7860:7860"            
     environment:
       - DO_NOT_TRACK=true
       - LANGFLOW_AUTHZ_AUDIT_ENABLED=true
@@ -108,10 +108,11 @@ services:
       #XmDAsoUB8XX6ymOScb444WM1ev3yU37X
       #http://localhost:8080/realms/langflow/protocol/openid-connect/auth?client_id=langflow-app&redirect_uri=http://localhost:7860&response_type=code&scope=openid
       #-----Enable the Redis job queue-----
-      #- LANGFLOW_WORKERS=3  # any value > 1
-      #- LANGFLOW_JOB_QUEUE_TYPE=redis
-      #- LANGFLOW_REDIS_QUEUE_URL=redis://langflow-redis:6379/1
+      - LANGFLOW_WORKERS=3  # any value > 1
+      - LANGFLOW_JOB_QUEUE_TYPE=redis
+      - LANGFLOW_REDIS_QUEUE_URL=redis://langflow-redis:6379/1
       - LANGFLOW_WORKER_TIMEOUT=600
+      - LANGFLOW_TIMEOUT
       #- HF_HUB_OFFLINE=1
       
     

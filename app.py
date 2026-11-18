@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -8,6 +9,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy import select, text
 
 from database import AsyncSessionLocal, Base, engine
+from langflow_client import LangflowClient
 from models import (
     AgentFavorite,
     AgentGroup,
@@ -18,12 +20,13 @@ from models import (
     Group,
     Integration,
     LLMRequestLog,
+    ProcessingJob,
     User,
     UserGroup,
 )
 
 from session import get_current_user
-from routers import admin, auth, chat, public, embed, api
+from routers import admin, auth, chat, public, embed, api, jobs
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -48,6 +51,22 @@ MIGRATIONS = [
     SET auth_methods = '["embed_hmac"]'
     WHERE auth_methods IS NULL
     """,
+    "CREATE TABLE IF NOT EXISTS processing_jobs ("
+    " id VARCHAR PRIMARY KEY,"
+    " flow_id VARCHAR NOT NULL,"
+    " user_id VARCHAR NOT NULL,"
+    " job_type VARCHAR NOT NULL,"
+    " status VARCHAR NOT NULL DEFAULT 'queued',"
+    " langflow_job_id VARCHAR,"
+    " input_files TEXT,"
+    " input_text TEXT,"
+    " result TEXT,"
+    " error TEXT,"
+    " created_at TIMESTAMP NOT NULL DEFAULT NOW(),"
+    " updated_at TIMESTAMP,"
+    " finished_at TIMESTAMP"
+    ")",
+    "ALTER TABLE flow_publications ADD COLUMN IF NOT EXISTS supports_files BOOLEAN NOT NULL DEFAULT FALSE",
 ]
 
 DEFAULT_GROUPS = [
@@ -106,6 +125,31 @@ async def _apply_migrations() -> None:
         except Exception as e:
             logger.warning("Миграция пропущена (%s): %s", stmt, e)
 
+async def _poll_jobs():
+    while True:
+        try:
+            async with AsyncSessionLocal() as db:
+                res = await db.execute(
+                    select(ProcessingJob).where(
+                        ProcessingJob.status.in_(["queued", "running"]),
+                        ProcessingJob.langflow_job_id.isnot(None),
+                    )
+                )
+                job_rows = list(res.scalars().all())
+                client = LangflowClient()
+                for job in job_rows:
+                    try:
+                        lf = await client.get_job_status(job.langflow_job_id)
+                        if jobs.apply_job_status(job, lf):
+                            await db.commit()
+                    except Exception as exc:
+                        logger.debug("Не удалось обновить job %s: %s", job.id, exc)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning("Ошибка поллера задач: %s", exc)
+        await asyncio.sleep(10)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -119,10 +163,17 @@ async def lifespan(app: FastAPI):
     await _seed_demo_mode_publication()
 
     logger.info("Схема БД инициализирована, системные группы проверены")
-    yield
-    await engine.dispose()
-    logger.info("Приложение остановлено")
-
+    poll_task = asyncio.create_task(_poll_jobs())
+    try:
+        yield
+    finally:
+        poll_task.cancel()
+        try:
+            await poll_task
+        except asyncio.CancelledError:
+            pass
+        await engine.dispose()
+        logger.info("Приложение остановлено")
 
 app = FastAPI(title="Langflow Agent Manager", lifespan=lifespan)
 
@@ -178,3 +229,4 @@ app.include_router(admin.router)
 app.include_router(chat.router)
 app.include_router(embed.router, tags=["embed"])
 app.include_router(api.router)  
+app.include_router(jobs.router)

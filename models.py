@@ -20,6 +20,7 @@ class FlowPublication(Base):
     is_published = Column(Boolean, default=False, nullable=False)
     published_at = Column(DateTime, nullable=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    supports_files = Column(Boolean, default=False, nullable=False)
 
     # Переопределения (если NULL — берём значения из Langflow)
     override_name = Column(String(200), nullable=True)
@@ -161,3 +162,21 @@ class EmbedNonce(Base):
     nonce = Column(String, primary_key=True)
     integration_id = Column(String, nullable=False, index=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+class ProcessingJob(Base):
+    __tablename__ = "processing_jobs"
+
+    id = Column(String, primary_key=True)               # uuid hex
+    flow_id = Column(String, nullable=False, index=True)
+    user_id = Column(String, nullable=False, index=True)
+    job_type = Column(String, nullable=False)           # "chat" | "ingestion"
+    status = Column(String, nullable=False, default="queued", index=True)
+    # queued | running | completed | failed | timeout
+    langflow_job_id = Column(String, nullable=True, index=True)  # job_id от Langflow
+    input_files = Column(Text, nullable=True)           # JSON: [{"name":..., "path":...}]
+    input_text = Column(Text, nullable=True)            # для чата
+    result = Column(Text, nullable=True)                # ответ / результат
+    error = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    finished_at = Column(DateTime, nullable=True)

@@ -7,3 +7,6 @@ langflow*db
 *db
 *storage
 .vscode
+
+# Вендорный код стороннего проекта — локально, не в репозитории
+vendor/flexible-graphrag/

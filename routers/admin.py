@@ -165,6 +165,7 @@ async def admin_publications(request: Request, db: AsyncSession = Depends(get_db
                 "name_overridden": bool(p and p.override_name),
                 "description_overridden": bool(p and p.override_description),
                 "is_published": bool(p and p.is_published),
+                "supports_files": bool(p and p.supports_files),
             }
         )
 
@@ -1093,3 +1094,51 @@ async def integration_create(
         "secret": secret,        # показать один раз!
         "auth_methods": auth_methods,
     }
+
+@router.get("/ingestion", response_class=HTMLResponse)
+async def admin_ingestion(request: Request, db: AsyncSession = Depends(get_db)):
+    user = get_current_user(request)
+    if not user or not user.get("is_admin"):
+        return RedirectResponse(url="/", status_code=302)
+
+    client = LangflowClient()
+    flows = await client.get_all_flows()
+
+    # Приоритет — flow, помеченные в публикациях как «Поддерживает файлы».
+    # Если ни один не помечен, показываем все, иначе страница была бы пустой.
+    res = await db.execute(
+        select(FlowPublication.flow_id).where(FlowPublication.supports_files.is_(True))
+    )
+    file_flow_ids = {fid for (fid,) in res.all()}
+
+    flow_options = [
+        {"id": f.get("id"), "name": f.get("name") or f.get("id")}
+        for f in flows
+        if f.get("id") and (not file_flow_ids or f.get("id") in file_flow_ids)
+    ]
+    flow_options.sort(key=lambda f: f["name"].lower())
+
+    return templates.TemplateResponse("admin_ingestion.html", {
+        "request": request, "user": user, "active_menu": "ingestion",
+        "flow_options": flow_options,
+    })
+
+
+class SupportFilesPayload(BaseModel):
+    flow_id: str
+    supports_files: bool
+
+
+@router.post("/flow/supports-files")
+async def flow_supports_files(
+    payload: SupportFilesPayload,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    _require_admin(request)
+    row = await _get_or_create_pub(db, payload.flow_id)
+    row.supports_files = payload.supports_files
+    row.updated_at = datetime.utcnow()
+    await db.commit()
+    invalidate_flow_cache()
+    return {"status": "ok", "supports_files": row.supports_files}

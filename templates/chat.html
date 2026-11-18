@@ -222,6 +222,39 @@
         align-self: flex-end;
         height: 42px;
     }
+    .file-chips {
+    display: flex; flex-wrap: wrap; gap: 6px;
+    padding: 0 12px 8px;
+    border-top: 1px solid #f3f4f6;
+    }
+    .file-chip {
+        display: inline-flex; align-items: center; gap: 6px;
+        background: #e0e7ff; color: #3730a3;
+        padding: 4px 8px; border-radius: 6px; font-size: .8rem;
+    }
+    .file-chip button {
+        background: transparent; border: none; color: #3730a3;
+        cursor: pointer; font-size: .9rem; padding: 0; line-height: 1;
+    }
+    .attach-btn {
+        background: transparent; border: 1px solid #d1d5db;
+        border-radius: 8px; padding: 0 12px; height: 42px;
+        font-size: 1.1rem; cursor: pointer;
+        align-self: flex-end;
+    }
+    .attach-btn:hover { background: #f3f4f6; }
+    .job-status {
+        display: flex; align-items: center; gap: 8px;
+        font-size: .9rem; color: #4b5563;
+    }
+    .job-status .spinner {
+        width: 14px; height: 14px;
+        border: 2px solid #d1d5db;
+        border-top-color: #2563eb;
+        border-radius: 50%;
+        animation: spin .8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
 </style>
 {% endblock %}
 {% block content %}
@@ -276,9 +309,19 @@
             {% endfor %}
         </div>
         <form class="input-row" id="chatForm" autocomplete="off">
-            <textarea id="msgInput" rows="1" placeholder="Напишите сообщение... (Enter — отправить, Shift+Enter — новая строка)" required></textarea>
+            {% if supports_files %}
+            <input type="file" id="fileInput" multiple hidden>
+            <button type="button" class="attach-btn" id="attachBtn"
+                    title="Прикрепить файл">📎</button>
+            {% endif %}
+            <textarea id="msgInput" rows="1"
+                    placeholder="Напишите сообщение... (Enter — отправить, Shift+Enter — новая строка)"
+                    required></textarea>
             <button type="submit">Отправить</button>
         </form>
+        {% if supports_files %}
+        <div class="file-chips" id="fileChips" style="display:none;"></div>
+        {% endif %}
     </section>
 </div>
 {% endblock %}
@@ -441,6 +484,12 @@ async function submitChatMessage(text) {
 form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const text = input.value.trim();
+
+    if (SUPPORTS_FILES && selectedFiles.length > 0) {
+        await submitWithFiles(selectedFiles.slice(), text);
+        return;
+    }
+
     if (!text) return;
     await submitChatMessage(text);
 });
@@ -568,17 +617,6 @@ function cancelInlineEdit(item) {
     editingItem = null;
 }
 
-function cancelInlineEdit(item) {
-    if (!item.classList.contains('editing')) return;
-    const input = item._titleInput;
-    const prev = item._prevTitleEl;
-    if (input && prev) input.replaceWith(prev);
-    item.classList.remove('editing');
-    item._titleInput = null;
-    item._prevTitleEl = null;
-    editingItem = null;
-}
-
 /* ---------- Клик по чату: одиночный → переход, двойной → редактирование ---------- */
 document.querySelectorAll('.chat-item .link').forEach(link => {
     let clickTimer = null;
@@ -601,6 +639,136 @@ document.querySelectorAll('.chat-item .link').forEach(link => {
         }
     });
 });
+
+/* ═══════════════════════════════════════════════════════════
+   Загрузка файлов (только если flow поддерживает)
+   ═══════════════════════════════════════════════════════════ */
+
+const SUPPORTS_FILES = {{ 'true' if supports_files else 'false' }};
+
+let selectedFiles = [];
+const fileInput   = document.getElementById('fileInput');
+const attachBtn   = document.getElementById('attachBtn');
+const fileChipsEl = document.getElementById('fileChips');
+
+if (SUPPORTS_FILES && attachBtn) {
+    attachBtn.addEventListener('click', () => fileInput.click());
+
+    fileInput.addEventListener('change', () => {
+        for (const f of fileInput.files) {
+            selectedFiles.push(f);
+        }
+        fileInput.value = '';   // чтобы можно было выбрать тот же файл повторно
+        renderFileChips();
+    });
+}
+
+function renderFileChips() {
+    if (!fileChipsEl) return;
+    fileChipsEl.innerHTML = '';
+    if (!selectedFiles.length) {
+        fileChipsEl.style.display = 'none';
+        return;
+    }
+    fileChipsEl.style.display = 'flex';
+
+    selectedFiles.forEach((f, idx) => {
+        const chip = document.createElement('span');
+        chip.className = 'file-chip';
+
+        const name = document.createElement('span');
+        name.textContent = f.name + ' (' + formatSize(f.size) + ')';
+
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.textContent = '×';
+        remove.title = 'Убрать';
+        remove.addEventListener('click', () => {
+            selectedFiles.splice(idx, 1);
+            renderFileChips();
+        });
+
+        chip.appendChild(name);
+        chip.appendChild(remove);
+        fileChipsEl.appendChild(chip);
+    });
+}
+
+function formatSize(bytes) {
+    if (bytes < 1024) return bytes + ' Б';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' КБ';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' МБ';
+}
+
+/* Отправка с файлами */
+async function submitWithFiles(files, text) {
+    lastUserMessageText = text;
+    appendUserMessage(text || ('📎 ' + files.map(f => f.name).join(', ')));
+    input.value = '';
+    autosize();
+    selectedFiles = [];
+    renderFileChips();
+
+    const botDiv = renderLoadingBotBubble();
+
+    const formData = new FormData();
+    formData.append('flow_id', flowId);
+    formData.append('session_id', chatId);
+    if (text) formData.append('message', text);
+    for (const f of files) formData.append('files', f);
+
+    let jobId = null;
+    try {
+        const res = await fetch('/api/upload-and-run', {
+            method: 'POST',
+            body: formData,
+            credentials: 'include',
+        });
+        if (!res.ok) throw new Error('HTTP ' + res.status + ': ' + (await res.text()));
+        const data = await res.json();
+        jobId = data.job_id;
+    } catch (err) {
+        renderBotError(botDiv, 'Ошибка загрузки файлов: ' + err.message, null);
+        return;
+    }
+
+    // Показываем индикатор «в обработке»
+    botDiv.innerHTML = '';
+    const status = document.createElement('div');
+    status.className = 'job-status';
+    status.innerHTML = '<div class="spinner"></div><span>Файлы обрабатываются…</span>';
+    botDiv.appendChild(status);
+    scrollBottom();
+
+    // Опрос статуса
+    const poll = setInterval(async () => {
+        try {
+            const r = await fetch(`/api/jobs/${jobId}`, { credentials: 'include' });
+            if (!r.ok) return;
+            const job = await r.json();
+
+            if (job.status === 'queued' || job.status === 'running') {
+                status.querySelector('span').textContent =
+                    job.status === 'queued' ? 'В очереди…' : 'Обработка…';
+                return;
+            }
+
+            clearInterval(poll);
+            if (job.status === 'completed' && !job.error) {
+                botDiv.innerHTML = '';
+                const content = document.createElement('div');
+                content.className = 'content';
+                content.innerHTML = marked.parse(job.result || '✅ Файлы обработаны.');
+                botDiv.appendChild(content);
+            } else {
+                renderBotError(botDiv, 'Ошибка обработки: ' + (job.error || job.status), null);
+            }
+            scrollBottom();
+        } catch (e) {
+            // сетевые ошибки — просто ждём следующий тик
+        }
+    }, 3000);
+}
 
 input.focus();
 scrollBottom();

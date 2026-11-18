@@ -11,6 +11,7 @@
         <th>Название</th>
         <th>Описание</th>
         <th>Группы</th>
+        <th title="">Поддерживает загрузку файлов</th>
         <th>Статус</th>
         <th style="width: 240px;">Действия</th>
     </tr>
@@ -32,7 +33,6 @@
             {% endif %}
         </td>
 
-        {# ЯЧЕЙКА С ГРУППАМИ — внутри <tr>, внутри цикла #}
         <td>
             {% set gids = flow_groups.get(f.id, []) %}
             {% if gids %}
@@ -44,6 +44,15 @@
                     Администратор
                 </span>
             {% endif %}
+        </td>
+
+        {# ─── ЧЕКБОКС «Поддерживает файлы» ─── #}
+        <td style="text-align:center;">
+            <input type="checkbox"
+                   class="chk-supports-files"
+                   data-id="{{ f.id }}"
+                   {% if f.supports_files %}checked{% endif %}
+                   title="Разрешить пользователям прикреплять файлы в чате">
         </td>
 
         <td>
@@ -70,7 +79,7 @@
     </tr>
 {% endfor %}
 {% if not flows %}
-    <tr><td colspan="6" class="muted">Нет flow из Langflow</td></tr>
+    <tr><td colspan="7" class="muted">Нет flow из Langflow</td></tr>
 {% endif %}
 </tbody>
     </table>
@@ -139,6 +148,31 @@ async function togglePublish(flowId, publish) {
     } catch (e) { alert('Ошибка сети: ' + e.message); }
 }
 
+/* ─── Чекбокс «Поддерживает файлы» ──────────────────────── */
+document.querySelectorAll('.chk-supports-files').forEach(chk => {
+    chk.addEventListener('change', async () => {
+        const flowId = chk.dataset.id;
+        const supports = chk.checked;
+        const prev = !supports;   // для отката при ошибке
+
+        chk.disabled = true;
+        try {
+            const res = await fetch('/admin/flow/supports-files', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({flow_id: flowId, supports_files: supports})
+            });
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+        } catch (e) {
+            chk.checked = prev;
+            alert('Не удалось изменить флаг: ' + e.message);
+        } finally {
+            chk.disabled = false;
+        }
+    });
+});
+
+/* ─── Модалка редактирования имени/описания ─────────────── */
 const modal      = document.getElementById('editModal');
 const nameInput  = document.getElementById('editName');
 const descInput  = document.getElementById('editDesc');
@@ -210,7 +244,8 @@ document.getElementById('editSave').addEventListener('click', async () => {
     } catch (e) { alert('Ошибка сети: ' + e.message); }
 });
 
-const ALL_GROUPS = {{ all_groups | tojson }};   // {id: name}
+/* ─── Модалка групп ─────────────────────────────────────── */
+const ALL_GROUPS = {{ all_groups | tojson }};
 const groupsModal = document.getElementById('groupsModal');
 const groupsListEl = document.getElementById('agentGroupsList');
 const groupsTitleEl = document.getElementById('groupsModalTitle');
@@ -221,7 +256,6 @@ document.querySelectorAll('.btn-groups').forEach(btn => {
         editingAgentId = btn.dataset.id;
         groupsTitleEl.textContent = 'Группы агента ' + editingAgentId.slice(0, 8) + '…';
 
-        // Подтягиваем текущие группы
         const res = await fetch('/admin/agent/' + editingAgentId + '/groups');
         const data = await res.json();
         const current = data.group_ids || [];
