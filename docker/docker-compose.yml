@@ -359,10 +359,12 @@ services:
     networks:
       - langflow-network
 
-  ia_shop_db:
+  ai_shop_db:
     image: postgres:16
     container_name: ai_shop_db
     restart: unless-stopped
+    ports:
+      - "5432:5432"
     environment:
       POSTGRES_USER: ai_shop
       POSTGRES_PASSWORD: ai_shop_password
@@ -392,13 +394,13 @@ services:
     env_file:
       - .env 
     environment:
-      - DATABASE_URL=postgresql+asyncpg://ai_shop:ai_shop_password@ia_shop_db/ai_shop
+      - DATABASE_URL=postgresql+asyncpg://ai_shop:ai_shop_password@ai_shop_db/ai_shop
       - LDAP_SERVER=ldap:389
     volumes:
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro
     depends_on:
-      ia_shop_db:
+      ai_shop_db:
         condition: service_healthy
       langflow:
         condition: service_started
