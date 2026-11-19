@@ -113,7 +113,11 @@ services:
       - LANGFLOW_REDIS_QUEUE_URL=redis://langflow-redis:6379/1
       - LANGFLOW_WORKER_TIMEOUT=600
       - LANGFLOW_TIMEOUT
-      #- HF_HUB_OFFLINE=1
+      - HF_HUB_OFFLINE=1
+      - TRANSFORMERS_OFFLINE=1
+      # Кэш моделей fastembed (Qdrant/bm25) — лежит в репозитории,
+      # чтобы система поднималась без интернета
+      - FASTEMBED_CACHE_PATH=/app/fastembed_cache
       
     
     volumes:
@@ -123,6 +127,7 @@ services:
       - ./langflow/langflow_uploads:/app/uploads
       - ./langflow/chroma_db:/app/chroma_db 
       - ./langflow/faiss_db:/app/faiss_db
+      - ./langflow/fastembed_cache:/app/fastembed_cache
     depends_on:
       langflow-db:
         condition: service_healthy

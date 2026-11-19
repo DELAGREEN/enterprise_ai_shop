@@ -10,3 +10,6 @@ langflow*db
 
 # Вендорный код стороннего проекта — локально, не в репозитории
 vendor/flexible-graphrag/
+
+# Кэш моделей fastembed (Qdrant/bm25) — переносится локально, не в git
+docker/langflow/fastembed_cache/
