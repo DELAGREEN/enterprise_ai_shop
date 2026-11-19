@@ -103,6 +103,10 @@ class FakeAsyncClient:
         type(self).calls.append(("POST", url, json, files, headers))
         return type(self).responses.pop(0)
 
+    async def delete(self, url, headers=None, **kwargs):
+        type(self).calls.append(("DELETE", url, None, None, headers))
+        return type(self).responses.pop(0)
+
 
 class LangflowClientContractTests(unittest.TestCase):
     def setUp(self):
@@ -271,25 +275,66 @@ class LangflowClientContractTests(unittest.TestCase):
             extract_error_text(result), "Workflow execution timed out."
         )
 
-    def test_upload_file_uses_flow_scoped_endpoint(self):
+    def test_upload_file_keeps_original_name(self):
         FakeAsyncClient.responses = [
-            FakeResponse(201, {
-                "flowId": "flow-1",
-                "file_path": "flow-1/2026-01-01_a.txt",
-            })
+            FakeResponse(200, []),                      # GET /api/v2/files — дубликатов нет
+            FakeResponse(201, {                          # POST /api/v2/files
+                "id": "file-1",
+                "name": "a",
+                "path": "user-1/a.txt",
+                "size": 4,
+            }),
         ]
 
         result = self._run(self._client().upload_file(
             io.BytesIO(b"data"), "a.txt", "flow-1"
         ))
 
-        method, url, payload, files, headers = FakeAsyncClient.calls[0]
+        list_method, list_url = FakeAsyncClient.calls[0][0], FakeAsyncClient.calls[0][1]
+        self.assertEqual(list_method, "GET")
+        self.assertEqual(list_url, "http://langflow:7860/api/v2/files")
+
+        method, url, payload, files, headers = FakeAsyncClient.calls[1]
         self.assertEqual(method, "POST")
-        self.assertEqual(
-            url, "http://langflow:7860/api/v1/files/upload/flow-1"
-        )
-        self.assertEqual(result["path"], "flow-1/2026-01-01_a.txt")
-        self.assertEqual(result["file_path"], "flow-1/2026-01-01_a.txt")
+        self.assertEqual(url, "http://langflow:7860/api/v2/files")
+        # имя уходит в Langflow как есть — без timestamp-префикса
+        self.assertEqual(files["file"][0], "a.txt")
+        self.assertEqual(result["path"], "user-1/a.txt")
+        self.assertEqual(result["file_path"], "user-1/a.txt")
+
+    def test_upload_file_replaces_same_name(self):
+        FakeAsyncClient.responses = [
+            FakeResponse(200, [                          # уже есть файл с тем же именем
+                {"id": "old-1", "path": "user-1/a.txt", "name": "a"},
+                {"id": "other", "path": "user-1/b.txt", "name": "b"},
+            ]),
+            FakeResponse(200, {}),                       # DELETE old-1
+            FakeResponse(201, {                          # POST новый
+                "id": "new-1", "name": "a", "path": "user-1/a.txt", "size": 4,
+            }),
+        ]
+
+        self._run(self._client().upload_file(io.BytesIO(b"data"), "a.txt", "flow-1"))
+
+        delete_call = FakeAsyncClient.calls[1]
+        self.assertEqual(delete_call[0], "DELETE")
+        self.assertEqual(delete_call[1], "http://langflow:7860/api/v2/files/old-1")
+        # чужой файл не трогаем
+        urls = [c[1] for c in FakeAsyncClient.calls]
+        self.assertNotIn("http://langflow:7860/api/v2/files/other", urls)
+
+    def test_upload_file_strips_directory_from_name(self):
+        FakeAsyncClient.responses = [
+            FakeResponse(200, []),
+            FakeResponse(201, {"id": "f", "name": "a", "path": "user-1/a.txt", "size": 4}),
+        ]
+
+        self._run(self._client().upload_file(
+            io.BytesIO(b"data"), "../../etc/a.txt", "flow-1"
+        ))
+
+        files = FakeAsyncClient.calls[1][3]
+        self.assertEqual(files["file"][0], "a.txt")
 
     def test_extract_output_text_supports_v2(self):
         self.assertEqual(

@@ -6,6 +6,7 @@ import time
 import json
 from typing import Any
 from typing import BinaryIO
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -211,17 +212,53 @@ class LangflowClient:
             r.raise_for_status()
             return r.json()
 
-    async def upload_file(self, file: BinaryIO, filename: str, flow_id: str) -> dict:
-        """Загружает файл в хранилище flow.
+    async def list_user_files(self) -> list:
+        """Файлы текущего пользователя API-ключа (v2, user-scoped)."""
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            r = await client.get(
+                f"{self._api_root}/api/v2/files",
+                headers=self.headers,
+            )
+            r.raise_for_status()
+            data = r.json()
+        return data if isinstance(data, list) else []
 
-        Используем flow-scoped endpoint ``/api/v1/files/upload/{flow_id}``:
-        только его ``file_path`` можно безопасно передать в ``files``
-        при запуске flow (user-scoped ``/api/v2/files`` для этого не подходит).
+    async def delete_user_file(self, file_id: str) -> None:
+        """Удаляет файл из хранилища пользователя по id."""
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            r = await client.delete(
+                f"{self._api_root}/api/v2/files/{file_id}",
+                headers=self.headers,
+            )
+            if r.status_code not in (200, 204, 404):
+                r.raise_for_status()
+
+    async def upload_file(self, file: BinaryIO, filename: str, flow_id: str) -> dict:
+        """Загружает файл, сохраняя его оригинальное имя.
+
+        Flow-scoped ``/api/v1/files/upload/{flow_id}`` добавляет к имени
+        timestamp (``2026-11-19_13-09-24_gost.docx``), и этот префикс потом
+        попадает в payload Qdrant. Поэтому используем ``/api/v2/files``:
+        он хранит файл как ``{user_id}/{filename}`` без переименования.
+
+        Перед загрузкой удаляем прежнюю версию с тем же именем — иначе
+        Langflow добавит суффикс ``" (1)"`` и имя снова «поедет».
         """
+        name = Path(filename).name
+
+        try:
+            for existing in await self.list_user_files():
+                if Path(str(existing.get("path") or "")).name == name:
+                    await self.delete_user_file(existing["id"])
+                    logger.info("Удалён прежний файл %s (%s)", name, existing["id"])
+        except httpx.HTTPError as e:
+            # Не блокируем загрузку из-за неудачной очистки
+            logger.warning("Не удалось очистить прежнюю версию %s: %s", name, e)
+
         async with httpx.AsyncClient(timeout=120.0) as client:
             r = await client.post(
-                f"{self._api_root}/api/v1/files/upload/{flow_id}",
-                files={"file": (filename, file)},
+                f"{self._api_root}/api/v2/files",
+                files={"file": (name, file)},
                 headers={"x-api-key": self.api_key} if self.api_key else {},
             )
             r.raise_for_status()
@@ -230,8 +267,11 @@ class LangflowClient:
         logger.info("Langflow upload %r → flow %s: %s", filename, flow_id, data)
 
         # Нормализуем ответ: jobs.py ожидает path/file_path.
-        if isinstance(data, dict) and not data.get("path"):
-            data["path"] = data.get("file_path")
+        if isinstance(data, dict):
+            if not data.get("path"):
+                data["path"] = data.get("file_path")
+            if not data.get("file_path"):
+                data["file_path"] = data.get("path")
         return data
 
     async def run_flow_background(
