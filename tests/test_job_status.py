@@ -4,7 +4,12 @@ import unittest
 from datetime import datetime
 
 from models import Chat, ChatMessage, LLMRequestLog
-from routers.jobs import EMPTY_RESULT_HINT, apply_job_status, save_job_history
+from routers.jobs import (
+    EMPTY_RESULT_HINT,
+    apply_job_status,
+    build_input_value,
+    save_job_history,
+)
 
 
 class FakeJob:
@@ -178,6 +183,30 @@ class SaveJobHistoryTests(unittest.TestCase):
 
         log = db.added[1]
         self.assertEqual(log.question, "📎 gost.docx")
+
+
+class BuildInputValueTests(unittest.TestCase):
+    FILES = [{"name": "gost.docx", "path": "u/gost.docx"}]
+
+    def test_text_only(self):
+        self.assertEqual(build_input_value("Привет", []), "Привет")
+
+    def test_files_only(self):
+        value = build_input_value(None, self.FILES)
+        self.assertEqual(value, "Проанализируй файлы: gost.docx")
+
+    def test_text_and_files_prefers_text(self):
+        self.assertEqual(build_input_value("Что тут?", self.FILES), "Что тут?")
+
+    def test_blank_text_falls_back_to_files(self):
+        self.assertEqual(
+            build_input_value("   \n ", self.FILES),
+            "Проанализируй файлы: gost.docx",
+        )
+
+    def test_nothing_to_send(self):
+        self.assertEqual(build_input_value(None, []), "")
+        self.assertEqual(build_input_value("   ", []), "")
 
 
 if __name__ == "__main__":

@@ -315,8 +315,7 @@
                     title="Прикрепить файл">📎</button>
             {% endif %}
             <textarea id="msgInput" rows="1"
-                    placeholder="Напишите сообщение... (Enter — отправить, Shift+Enter — новая строка)"
-                    required></textarea>
+                    placeholder="Напишите сообщение... (Enter — отправить, Shift+Enter — новая строка)"></textarea>
             <button type="submit">Отправить</button>
         </form>
         {% if supports_files %}
@@ -421,17 +420,19 @@ function renderBotError(botDiv, message, retryText) {
     err.className = 'chat-error';
     err.innerHTML = '<span>' + escapeHtml(message) + '</span>';
 
-    const retryBtn = document.createElement('button');
-    retryBtn.type = 'button';
-    retryBtn.textContent = 'Повторить';
-    retryBtn.className = 'retry-btn';
-    retryBtn.addEventListener('click', () => {
-        const text = retryText || lastUserMessageText;
-        if (text) {
+    const retryTextValue = retryText || lastUserMessageText;
+    // Файлы после отправки очищены, поэтому без текста повторять нечего
+    if (retryTextValue) {
+        const retryBtn = document.createElement('button');
+        retryBtn.type = 'button';
+        retryBtn.textContent = 'Повторить';
+        retryBtn.className = 'retry-btn';
+        retryBtn.addEventListener('click', () => {
+            lastUserMessageText = retryTextValue;
             form.requestSubmit();
-        }
-    });
-    err.appendChild(retryBtn);
+        });
+        err.appendChild(retryBtn);
+    }
     botDiv.appendChild(err);
     scrollBottom();
 }
@@ -484,13 +485,19 @@ async function submitChatMessage(text) {
 form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const text = input.value.trim();
+    const files = SUPPORTS_FILES ? selectedFiles.slice() : [];
 
-    if (SUPPORTS_FILES && selectedFiles.length > 0) {
-        await submitWithFiles(selectedFiles.slice(), text);
+    // Отправляем, если есть хотя бы что-то одно: текст или файлы
+    if (files.length > 0) {
+        await submitWithFiles(files, text);
         return;
     }
 
-    if (!text) return;
+    if (!text) {
+        input.focus();
+        return;
+    }
+
     await submitChatMessage(text);
 });
 

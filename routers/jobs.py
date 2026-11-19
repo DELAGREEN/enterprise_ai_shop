@@ -149,6 +149,22 @@ async def save_job_history(db: AsyncSession, job: ProcessingJob) -> bool:
     return True
 
 
+def build_input_value(message: str | None, uploaded: list[dict]) -> str:
+    """Текст запроса к flow.
+
+    Пользователь может отправить только файлы, только текст или всё вместе.
+    Если текста нет, но есть файлы — подставляем их список.
+    Пустая строка означает «отправлять нечего».
+    """
+    text = (message or "").strip()
+    if text:
+        return text
+    if uploaded:
+        names = ", ".join(str(up.get("name") or "") for up in uploaded)
+        return f"Проанализируй файлы: {names}".strip()
+    return ""
+
+
 async def _create_job(
     db: AsyncSession,
     user_id: str,
@@ -179,12 +195,18 @@ async def upload_and_run(
     flow_id: str = Form(...),
     session_id: str | None = Form(None),
     message: str | None = Form(None),
-    files: list[UploadFile] = File(...),
+    files: list[UploadFile] | None = File(None),
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     if not user:
         raise HTTPException(401, "Not authenticated")
+
+    uploaded_files = files or []
+    if not uploaded_files and not (message or "").strip():
+        raise HTTPException(
+            status_code=400, detail="Нужен текст сообщения или файл"
+        )
 
     # Чат, из которого отправили файлы (None — служебная страница ingestion).
     # Проверяем владельца, иначе можно было бы писать в чужую историю.
@@ -205,7 +227,7 @@ async def upload_and_run(
 
     # 1. Загружаем файлы в хранилище flow
     uploaded = []
-    for f in files:
+    for f in uploaded_files:
         content = await f.read()
         try:
             result = await client.upload_file(
@@ -248,14 +270,11 @@ async def upload_and_run(
 
     # 2. Формируем inputs для flow
     # Read File компонент получает пути через поле files в WorkflowRunRequest
-    input_value = (message or "").strip() or (
-        f"Проанализируй файлы: {', '.join(up['name'] for up in uploaded)}"
-    )
+    input_value = build_input_value(message, uploaded)
 
-    inputs = {
-        "input_value": input_value,
-        "file_paths": [up["path"] for up in uploaded],
-    }
+    inputs = {"input_value": input_value}
+    if uploaded:
+        inputs["file_paths"] = [up["path"] for up in uploaded]
 
     # 3. Запускаем в фоне
     resp = await client.run_flow_background(flow_id, inputs, session_id=session_id)
