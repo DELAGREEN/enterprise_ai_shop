@@ -25,13 +25,14 @@ EOF
 
 ## Офлайн-режим: кэш моделей
 
-Для запуска без интернета включены `HF_HUB_OFFLINE=1` и `TRANSFORMERS_OFFLINE=1`.
 Модели Docling кэшируются в `langflow_data/.cache/huggingface/hub`.
 
 Отдельно от них работает **fastembed** (sparse-энкодер BM25 в компоненте
 `Qdrant Hybrid Ingest`): у него свой кэш, на huggingface-кэш он не смотрит.
 Модель `Qdrant/bm25` кладётся в `docker/langflow/fastembed_cache` и
 подключается в контейнер через `FASTEMBED_CACHE_PATH=/app/fastembed_cache`.
+Если модель уже есть в этом каталоге, fastembed берёт её оттуда и в сеть
+не обращается.
 
 Каталог кэша **не хранится в git** (он в `.gitignore`): его нужно один раз
 положить на машину — скопировать с физического носителя или создать
@@ -69,9 +70,9 @@ cp -rL langflow/fastembed_cache /media/usb/fastembed_cache
 tar czf fastembed_cache.tar.gz -C langflow fastembed_cache
 ```
 
-Проверка, что офлайн работает:
+Проверка, что модель подхватывается из кэша:
 
 ```bash
-docker exec langflow sh -lc 'HF_HUB_OFFLINE=1 /app/.venv/bin/python -c \
-  "from fastembed import SparseTextEmbedding; SparseTextEmbedding(model_name=\"Qdrant/bm25\"); print(\"OK\")"'
+docker exec langflow /app/.venv/bin/python -c \
+  "from fastembed import SparseTextEmbedding; SparseTextEmbedding(model_name='Qdrant/bm25'); print('OK')"
 ```

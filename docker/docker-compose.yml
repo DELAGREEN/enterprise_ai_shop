@@ -112,10 +112,7 @@ services:
       - LANGFLOW_JOB_QUEUE_TYPE=redis
       - LANGFLOW_REDIS_QUEUE_URL=redis://langflow-redis:6379/1
       - LANGFLOW_WORKER_TIMEOUT=600
-      - LANGFLOW_TIMEOUT
-      - HF_HUB_OFFLINE=1
-      - TRANSFORMERS_OFFLINE=1
-      # Кэш моделей fastembed (Qdrant/bm25) — лежит в репозитории,
+      # Кэш моделей fastembed (Qdrant/bm25) — подкладывается локально,
       # чтобы система поднималась без интернета
       - FASTEMBED_CACHE_PATH=/app/fastembed_cache
       
