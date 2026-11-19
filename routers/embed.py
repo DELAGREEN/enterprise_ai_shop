@@ -2,17 +2,23 @@ import logging
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import (
+    HTMLResponse,
+    JSONResponse,
+    RedirectResponse,
+    StreamingResponse,
+)
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import config
-from database import get_db
+from database import AsyncSessionLocal, get_db
 from embed_auth import validate_embed_token
 from langflow_client import LangflowClient, extract_output_text, parse_thinking
 from models import Chat, ChatMessage, FlowPublication, LLMRequestLog, User, UserGroup
 from session import MAX_AGE, SESSION_COOKIE, create_session
+from streaming import iter_flow_events, sse_pack
 from templating import templates
 
 from datetime import datetime
@@ -138,6 +144,7 @@ async def embed_chat(
             "messages": messages,
             "full_url": full_url,
             "embed_user": u,
+            "show_thinking": bool(chat.show_thinking),
         },
     )
 
@@ -208,6 +215,205 @@ async def embed_chat_send(
     await db.commit()
 
     return {"text": answer, "thinking": thinking}
+
+
+async def _save_embed_stream_result(
+    chat_id: str,
+    flow_id: str,
+    username: str,
+    title: str,
+    question: str,
+    answer: str | None,
+    thinking: str,
+) -> None:
+    """Сохраняет вопрос и ответ embed-чата после завершения потока.
+
+    ``answer is None`` — поток не дал ответа: сохраняем только вопрос.
+    """
+    async with AsyncSessionLocal() as session:
+        chat = await session.get(Chat, chat_id)
+        if chat is None:
+            logger.warning("Embed-чат %s исчез до сохранения ответа", chat_id)
+            return
+
+        chat.title = title
+        chat.updated_at = datetime.utcnow()
+
+        session.add(ChatMessage(chat_id=chat_id, role="user", content=question))
+
+        if answer is not None:
+            session.add(
+                ChatMessage(
+                    chat_id=chat_id,
+                    role="assistant",
+                    content=answer,
+                    thinking=thinking or None,
+                )
+            )
+            session.add(
+                LLMRequestLog(
+                    user_id=username,
+                    flow_id=flow_id,
+                    chat_id=chat_id,
+                    chat_title=title,
+                    question=question,
+                    answer=answer,
+                    thinking=thinking or None,
+                )
+            )
+
+        await session.commit()
+
+
+@router.post("/embed/chat/{flow_id}/{chat_id}/send-stream")
+async def embed_chat_send_stream(
+    flow_id: str,
+    chat_id: str,
+    payload: EmbedMessagePayload,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Потоковый ответ embed-чата (SSE)."""
+    integ = await validate_embed_token(
+        db, request, payload.i, payload.u, payload.e, payload.n, payload.s,
+        consume_nonce=False,
+    )
+    if integ.flow_id != flow_id:
+        raise HTTPException(status_code=403, detail="Токен выдан для другого flow")
+
+    pub_res = await db.execute(
+        select(FlowPublication).where(
+            FlowPublication.flow_id == flow_id,
+            FlowPublication.is_published.is_(True),
+        )
+    )
+    if pub_res.scalar_one_or_none() is None:
+        raise HTTPException(status_code=403, detail="Агент больше не опубликован")
+
+    chat = await db.get(Chat, chat_id)
+    if not chat or chat.flow_id != flow_id or chat.user_id != payload.u:
+        raise HTTPException(status_code=404, detail="Чат не найден")
+
+    text_in = payload.message.strip()
+    if not text_in:
+        raise HTTPException(status_code=400, detail="Пустое сообщение")
+
+    username = payload.u
+    title = chat.title
+    if title in ("Новый чат", "Встроенный чат"):
+        title = text_in.split("\n")[0].strip()[:60] or title
+
+    async def event_stream():
+        client = LangflowClient()
+        thinking_parts: list[str] = []
+        answer_parts: list[str] = []
+        final_text = ""
+        failed = ""
+
+        try:
+            async for kind, chunk in iter_flow_events(
+                client, flow_id, text_in, chat_id
+            ):
+                if kind == "thinking":
+                    thinking_parts.append(chunk)
+                elif kind == "answer":
+                    answer_parts.append(chunk)
+                elif kind == "reset":
+                    thinking_parts.clear()
+                    answer_parts = [chunk]
+                elif kind == "final":
+                    final_text = chunk
+                    continue
+                elif kind == "error":
+                    failed = chunk
+                    continue
+
+                yield sse_pack(kind, {"text": chunk})
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Ошибка стрима embed-чата %s/%s: %s", flow_id, chat_id, exc)
+            failed = failed or "Ошибка flow. Попробуйте ещё раз."
+
+        answer = "".join(answer_parts).strip()
+        thinking = "".join(thinking_parts).strip()
+
+        # Событие output — источник истины (см. chat_send_stream)
+        if final_text:
+            final_answer, final_thinking = parse_thinking(final_text)
+            if final_answer and final_answer.strip():
+                answer = final_answer.strip()
+            if final_thinking and not thinking:
+                thinking = final_thinking.strip()
+
+        if not answer:
+            logger.warning(
+                "Стрим embed-чата %s/%s не дал ответа: %s", flow_id, chat_id, failed
+            )
+            try:
+                await _save_embed_stream_result(
+                    chat_id, flow_id, username, title, text_in, None, ""
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception("Не удалось сохранить вопрос embed-чата %s", chat_id)
+            yield sse_pack(
+                "error",
+                {"error": failed or "Ошибка flow. Попробуйте ещё раз.", "retryable": True},
+            )
+            return
+
+        try:
+            await _save_embed_stream_result(
+                chat_id, flow_id, username, title, text_in, answer, thinking
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("Не удалось сохранить ответ embed-чата %s", chat_id)
+
+        yield sse_pack(
+            "done", {"text": answer, "thinking": thinking, "title": title}
+        )
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+class EmbedThinkingPayload(BaseModel):
+    enabled: bool
+    i: str
+    u: str
+    e: int
+    n: str
+    s: str
+
+
+@router.post("/embed/chat/{flow_id}/{chat_id}/thinking")
+async def embed_chat_thinking(
+    flow_id: str,
+    chat_id: str,
+    payload: EmbedThinkingPayload,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Сохраняет настройку «показывать мышление» для embed-чата."""
+    integ = await validate_embed_token(
+        db, request, payload.i, payload.u, payload.e, payload.n, payload.s,
+        consume_nonce=False,
+    )
+    if integ.flow_id != flow_id:
+        raise HTTPException(status_code=403, detail="Токен выдан для другого flow")
+
+    chat = await db.get(Chat, chat_id)
+    if not chat or chat.flow_id != flow_id or chat.user_id != payload.u:
+        raise HTTPException(status_code=404, detail="Чат не найден")
+
+    chat.show_thinking = bool(payload.enabled)
+    await db.commit()
+    return {"status": "ok", "show_thinking": chat.show_thinking}
 
 @router.get("/embed/sso/{flow_id}/{chat_id}")
 async def embed_sso(

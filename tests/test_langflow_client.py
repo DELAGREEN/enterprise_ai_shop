@@ -9,6 +9,8 @@ import httpx
 import config
 from langflow_client import (
     LangflowClient,
+    ThinkingSplitter,
+    _stream_output_text,
     build_file_tweaks,
     extract_error_text,
     extract_output_text,
@@ -367,6 +369,134 @@ class LangflowClientContractTests(unittest.TestCase):
             }),
             "",
         )
+
+
+class ThinkingSplitterTests(unittest.TestCase):
+    def _run(self, chunks):
+        s = ThinkingSplitter()
+        out = []
+        for c in chunks:
+            out.extend(s.feed(c))
+        out.extend(s.finish())
+        return out, s
+
+    def test_marker_in_single_chunk(self):
+        out, s = self._run(["рассуждение</think>\n\nОтвет"])
+        self.assertEqual(out, [("thinking", "рассуждение"), ("answer", "\n\nОтвет")])
+        self.assertTrue(s.marker_found)
+
+    def test_marker_split_between_chunks(self):
+        out, s = self._run(["думаю", " ещё</th", "ink>\n\nПривет"])
+        thinking = "".join(t for k, t in out if k == "thinking")
+        answer = "".join(t for k, t in out if k == "answer")
+        self.assertEqual(thinking, "думаю ещё")
+        self.assertEqual(answer, "\n\nПривет")
+        self.assertTrue(s.marker_found)
+
+    def test_paired_open_tag_is_stripped(self):
+        out, _ = self._run(["<think>размышление</think>ответ"])
+        self.assertEqual(out, [("thinking", "размышление"), ("answer", "ответ")])
+
+    def test_no_marker_keeps_text_until_finish(self):
+        out, s = self._run(["просто", " текст"])
+        self.assertFalse(s.marker_found)
+        self.assertEqual("".join(t for _, t in out), "просто текст")
+
+    def test_answer_after_marker_streams_directly(self):
+        s = ThinkingSplitter()
+        s.feed("x</think>")
+        self.assertEqual(s.feed("ещё"), [("answer", "ещё")])
+        self.assertEqual(s.feed("и ещё"), [("answer", "и ещё")])
+
+    def test_marker_is_case_insensitive(self):
+        out, s = self._run(["мысль</THINK>ответ"])
+        self.assertTrue(s.marker_found)
+        self.assertEqual("".join(t for k, t in out if k == "answer"), "ответ")
+
+    def test_tail_is_held_so_marker_is_not_lost(self):
+        # Маркер приходит разрезанным: часть попадает в придержанный хвост
+        s = ThinkingSplitter()
+        first = s.feed("текст</thi")
+        # Первый кусок отдан не целиком — последние 7 символов придержаны
+        self.assertEqual("".join(t for _, t in first), "тек")
+        self.assertFalse(s.marker_found)
+
+        second = s.feed("nk>да")
+        self.assertTrue(s.marker_found)
+        self.assertEqual(
+            "".join(t for _, t in first + second), "текстда"
+        )
+
+
+class IterFlowEventsTests(unittest.TestCase):
+    def _collect(self, tokens):
+        class FakeClient:
+            async def stream_flow(self, flow_id, input_value, session_id):
+                for t in tokens:
+                    yield ("token", t)
+
+        async def run():
+            from streaming import iter_flow_events
+
+            return [e async for e in iter_flow_events(FakeClient(), "f", "q", None)]
+
+        return asyncio.run(run())
+
+    def test_splits_thinking_and_answer(self):
+        events = self._collect(["думаю", "</think>", "ответ"])
+
+        kinds = [k for k, _ in events]
+        self.assertIn("thinking", kinds)
+        self.assertIn("answer", kinds)
+        self.assertNotIn("reset", kinds)
+
+    def test_emits_reset_when_no_marker(self):
+        events = self._collect(["без", " маркера"])
+
+        self.assertEqual(events[-1], ("reset", "без маркера"))
+
+    def test_forwards_error(self):
+        class FakeClient:
+            async def stream_flow(self, flow_id, input_value, session_id):
+                yield ("error", "Langflow недоступен")
+
+        async def run():
+            from streaming import iter_flow_events
+
+            return [e async for e in iter_flow_events(FakeClient(), "f", "q", None)]
+
+        self.assertEqual(asyncio.run(run()), [("error", "Langflow недоступен")])
+
+    def test_forwards_final_event(self):
+        class FakeClient:
+            async def stream_flow(self, flow_id, input_value, session_id):
+                yield ("token", "мысль</think>от")
+                yield ("token", "вет")
+                yield ("final", "мысль</think>ответ")
+
+        async def run():
+            from streaming import iter_flow_events
+
+            return [e async for e in iter_flow_events(FakeClient(), "f", "q", None)]
+
+        events = asyncio.run(run())
+        self.assertEqual(events[-1], ("final", "мысль</think>ответ"))
+
+
+class StreamOutputTextTests(unittest.TestCase):
+    def test_content_string(self):
+        self.assertEqual(_stream_output_text({"content": "привет"}), "привет")
+
+    def test_content_list(self):
+        data = {"content": [{"text": "a"}, {"text": "b"}]}
+        self.assertEqual(_stream_output_text(data), "ab")
+
+    def test_results_message_fallback(self):
+        data = {"results": {"message": {"text": "из message"}}}
+        self.assertEqual(_stream_output_text(data), "из message")
+
+    def test_empty(self):
+        self.assertEqual(_stream_output_text({}), "")
 
 
 if __name__ == "__main__":

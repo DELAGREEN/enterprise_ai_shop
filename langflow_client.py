@@ -5,6 +5,7 @@ import config
 import time 
 import json
 from typing import Any
+from typing import AsyncIterator
 from typing import BinaryIO
 from pathlib import Path
 
@@ -202,6 +203,76 @@ class LangflowClient:
             logger.exception("Ошибка запуска flow %s: %s", flow_id, e)
             return {"error": str(e)}
 
+    async def stream_flow(
+        self, flow_id: str, input_value: str, session_id: str | None = None
+    ) -> AsyncIterator[tuple[str, str]]:
+        """Потоковый запуск flow.
+
+        Отдаёт пары ``("token", кусок)`` по мере генерации, ``("final", текст)``
+        по событию ``output`` (финальный текст flow) и ``("error", msg)``
+        при сбое. Langflow стримит SSE, где тип события лежит в поле ``event``
+        JSON-а: ``token`` — кусок текста, ``output`` — итог, ``end`` — конец,
+        ``error`` — ошибка.
+        """
+        if config.ENABLE_DEMO_MODE:
+            demo = _demo_flow_response(input_value)
+            text = demo["outputs"][0]["outputs"][0]["results"]["message"]["text"]
+            yield ("token", text)
+            return
+
+        payload = {
+            "flow_id": flow_id,
+            "input_value": input_value,
+            "mode": "stream",
+        }
+        if session_id:
+            payload["session_id"] = session_id
+
+        try:
+            async with httpx.AsyncClient(timeout=300.0) as client:
+                async with client.stream(
+                    "POST",
+                    f"{self._api_root}/api/v2/workflows",
+                    json=payload,
+                    headers=self.headers,
+                ) as r:
+                    if r.status_code >= 400:
+                        body = await r.aread()
+                        logger.error(
+                            "Langflow stream вернул %s: %s",
+                            r.status_code,
+                            body[:500],
+                        )
+                        yield ("error", f"Langflow вернул ошибку {r.status_code}")
+                        return
+
+                    async for line in r.aiter_lines():
+                        if not line or not line.startswith("data:"):
+                            continue
+                        try:
+                            evt = json.loads(line[5:].strip())
+                        except ValueError:
+                            continue
+
+                        name = evt.get("event")
+                        data = evt.get("data") or {}
+
+                        if name == "token":
+                            chunk = data.get("chunk")
+                            if chunk:
+                                yield ("token", chunk)
+                        elif name == "output":
+                            text = _stream_output_text(data)
+                            if text:
+                                yield ("final", text)
+                        elif name == "error":
+                            yield ("error", str(data.get("error") or data))
+                        elif name == "end":
+                            return
+        except httpx.HTTPError as e:
+            logger.exception("Ошибка потока Langflow %s: %s", flow_id, e)
+            yield ("error", "Langflow недоступен")
+
     async def get_flow(self, flow_id: str) -> dict:
         """Полное определение flow (нужно для tweaks файловых компонентов)."""
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -396,6 +467,86 @@ class LangflowClient:
 
             r.raise_for_status()
             return data or {}
+
+
+def _stream_output_text(data: dict) -> str:
+    """Достаёт финальный текст из события ``output`` SSE-потока Langflow."""
+    content = data.get("content")
+    if isinstance(content, str) and content.strip():
+        return content
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, dict):
+                parts.append(str(item.get("text") or ""))
+            else:
+                parts.append(str(item))
+        joined = "".join(parts)
+        if joined.strip():
+            return joined
+
+    message = (data.get("results") or {}).get("message") or {}
+    text = message.get("text") or (message.get("data") or {}).get("text")
+    return text or ""
+
+
+class ThinkingSplitter:
+    """Делит поток токенов на «мышление» и ответ по тегу ``</think>``.
+
+    Модель без открывающего тега сначала генерирует рассуждение, затем
+    ``</think>``, затем сам ответ. Маркер может прийти разбитым между
+    чанками, поэтому последние ``len("</think>") - 1`` символов
+    придерживаются до следующего куска.
+    """
+
+    _CLOSE = "</think>"
+    _OPEN = "<think>"
+    _TAIL = len("</think>") - 1
+
+    def __init__(self) -> None:
+        self._pending = ""
+        self._in_answer = False
+        self.marker_found = False
+
+    def feed(self, chunk: str) -> list[tuple[str, str]]:
+        if not chunk:
+            return []
+
+        if self._in_answer:
+            return [("answer", chunk)]
+
+        self._pending += chunk
+        idx = self._pending.lower().find(self._CLOSE)
+        if idx == -1:
+            # Держим хвост: маркер может быть разрезан между чанками
+            if len(self._pending) <= self._TAIL:
+                return []
+            head = self._pending[: -self._TAIL]
+            self._pending = self._pending[-self._TAIL :]
+            return [("thinking", head)]
+
+        thinking = self._pending[:idx]
+        answer = self._pending[idx + len(self._CLOSE) :]
+        self._pending = ""
+        self._in_answer = True
+        self.marker_found = True
+
+        open_idx = thinking.lower().find(self._OPEN)
+        if open_idx != -1:
+            thinking = thinking[open_idx + len(self._OPEN) :]
+
+        out: list[tuple[str, str]] = []
+        if thinking:
+            out.append(("thinking", thinking))
+        if answer:
+            out.append(("answer", answer))
+        return out
+
+    def finish(self) -> list[tuple[str, str]]:
+        if not self._pending:
+            return []
+        pending, self._pending = self._pending, ""
+        return [("answer", pending)]
 
 
 def parse_thinking(text: str) -> tuple[str, str]:

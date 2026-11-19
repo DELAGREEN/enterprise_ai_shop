@@ -3,15 +3,21 @@ import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import (
+    HTMLResponse,
+    JSONResponse,
+    RedirectResponse,
+    StreamingResponse,
+)
 from pydantic import BaseModel
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database import get_db
+from database import AsyncSessionLocal, get_db
 from langflow_client import LangflowClient, extract_output_text, parse_thinking
 from models import Chat, ChatMessage, FlowPublication, LLMRequestLog
 from session import get_current_user
+from streaming import iter_flow_events, sse_pack
 from templating import templates
 
 logger = logging.getLogger(__name__)
@@ -156,6 +162,7 @@ async def chat_page(
             "chats": chats,
             "messages": messages,
             "supports_files": supports_files,
+            "show_thinking": bool(chat.show_thinking),
         },
     )
 
@@ -243,6 +250,185 @@ async def chat_send(
     await db.commit()
 
     return {"status": "ok", "text": answer, "thinking": thinking, "title": chat.title}
+
+
+async def _save_stream_result(
+    chat_id: str,
+    flow_id: str,
+    username: str,
+    title: str,
+    question: str,
+    answer: str | None,
+    thinking: str,
+) -> None:
+    """Сохраняет вопрос и ответ после завершения потока.
+
+    Открываем собственную сессию: к моменту работы генератора сессия из
+    зависимости ``get_db`` уже может быть закрыта.
+
+    ``answer is None`` — поток не дал ответа: сохраняем только вопрос,
+    чтобы он не потерялся из истории.
+    """
+    async with AsyncSessionLocal() as session:
+        chat = await session.get(Chat, chat_id)
+        if chat is None:
+            logger.warning("Чат %s исчез до сохранения ответа", chat_id)
+            return
+
+        chat.title = title
+        chat.updated_at = datetime.utcnow()
+
+        session.add(ChatMessage(chat_id=chat_id, role="user", content=question))
+
+        if answer is not None:
+            session.add(
+                ChatMessage(
+                    chat_id=chat_id,
+                    role="assistant",
+                    content=answer,
+                    thinking=thinking or None,
+                )
+            )
+            session.add(
+                LLMRequestLog(
+                    user_id=username,
+                    flow_id=flow_id,
+                    chat_id=chat_id,
+                    chat_title=title,
+                    question=question,
+                    answer=answer,
+                    thinking=thinking or None,
+                )
+            )
+
+        await session.commit()
+
+
+@router.post("/chat/{flow_id}/{chat_id}/send-stream")
+async def chat_send_stream(
+    flow_id: str,
+    chat_id: str,
+    payload: MessagePayload,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Потоковый ответ: отдаёт токены по мере генерации (SSE)."""
+    if not await _is_published(db, flow_id):
+        raise HTTPException(status_code=403, detail="Агент не опубликован")
+
+    user = get_current_user(request)
+    chat = await _get_chat_or_404(db, chat_id, flow_id, user["username"])
+
+    text_in = payload.message.strip()
+    if not text_in:
+        raise HTTPException(status_code=400, detail="Пустое сообщение")
+
+    username = user["username"]
+    title = chat.title
+    if title == "Новый чат":
+        title = text_in.split("\n")[0].strip()[:60] or "Новый чат"
+
+    async def event_stream():
+        client = LangflowClient()
+        thinking_parts: list[str] = []
+        answer_parts: list[str] = []
+        final_text = ""
+        failed = ""
+
+        try:
+            async for kind, chunk in iter_flow_events(
+                client, flow_id, text_in, chat_id
+            ):
+                if kind == "thinking":
+                    thinking_parts.append(chunk)
+                elif kind == "answer":
+                    answer_parts.append(chunk)
+                elif kind == "reset":
+                    # Маркер не пришёл: это был не «мышление», а ответ
+                    thinking_parts.clear()
+                    answer_parts = [chunk]
+                elif kind == "final":
+                    final_text = chunk
+                    continue
+                elif kind == "error":
+                    failed = chunk
+                    continue
+
+                yield sse_pack(kind, {"text": chunk})
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Ошибка стрима чата %s/%s: %s", flow_id, chat_id, exc)
+            failed = failed or "Ошибка flow. Попробуйте ещё раз."
+
+        answer = "".join(answer_parts).strip()
+        thinking = "".join(thinking_parts).strip()
+
+        # Событие output — то же, что вернул бы обычный /run. Берём его как
+        # источник истины: поток токенов может оборваться на вызове инструмента
+        # и не содержать финального ответа.
+        if final_text:
+            final_answer, final_thinking = parse_thinking(final_text)
+            if final_answer and final_answer.strip():
+                answer = final_answer.strip()
+            if final_thinking and not thinking:
+                thinking = final_thinking.strip()
+
+        if not answer:
+            logger.warning(
+                "Стрим чата %s/%s не дал ответа: %s", flow_id, chat_id, failed
+            )
+            try:
+                await _save_stream_result(
+                    chat_id, flow_id, username, title, text_in, None, ""
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception("Не удалось сохранить вопрос чата %s", chat_id)
+            yield sse_pack(
+                "error",
+                {"error": failed or "Ошибка flow. Попробуйте ещё раз.", "retryable": True},
+            )
+            return
+
+        try:
+            await _save_stream_result(
+                chat_id, flow_id, username, title, text_in, answer, thinking
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("Не удалось сохранить ответ чата %s", chat_id)
+
+        yield sse_pack(
+            "done", {"text": answer, "thinking": thinking, "title": title}
+        )
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+class ThinkingPayload(BaseModel):
+    enabled: bool
+
+
+@router.post("/chat/{flow_id}/{chat_id}/thinking")
+async def chat_thinking(
+    flow_id: str,
+    chat_id: str,
+    payload: ThinkingPayload,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Сохраняет, показывать ли мышление модели в этом чате."""
+    user = get_current_user(request)
+    chat = await _get_chat_or_404(db, chat_id, flow_id, user["username"])
+
+    chat.show_thinking = bool(payload.enabled)
+    await db.commit()
+    return {"status": "ok", "show_thinking": chat.show_thinking}
 
 
 class RenamePayload(BaseModel):

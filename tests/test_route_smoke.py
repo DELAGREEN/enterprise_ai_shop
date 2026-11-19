@@ -77,11 +77,15 @@ class RouteSmokeTests(unittest.TestCase):
             "/chat/{flow_id}",
             "/chat/{flow_id}/{chat_id}",
             "/chat/{flow_id}/{chat_id}/send",
+            "/chat/{flow_id}/{chat_id}/send-stream",
+            "/chat/{flow_id}/{chat_id}/thinking",
             "/chat/{flow_id}/{chat_id}/rename",
             "/chat/{flow_id}/{chat_id}/delete",
             "/chat/{flow_id}/new",
             "/embed/chat/{flow_id}",
             "/embed/chat/{flow_id}/{chat_id}/send",
+            "/embed/chat/{flow_id}/{chat_id}/send-stream",
+            "/embed/chat/{flow_id}/{chat_id}/thinking",
             "/embed/sso/{flow_id}/{chat_id}",
         ]:
             self.assert_route_registered(path)

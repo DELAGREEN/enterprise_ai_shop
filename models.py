@@ -34,6 +34,8 @@ class Chat(Base):
     flow_id = Column(String, nullable=False, index=True)
     user_id = Column(String, nullable=False, index=True) # username
     title = Column(String, nullable=False, default="Новый чат")
+    # Показывать ли блок «мышления модели» в этом чате (по умолчанию выключено)
+    show_thinking = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False

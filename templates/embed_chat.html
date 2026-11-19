@@ -38,6 +38,7 @@
             color: #78350f; border-radius: 6px; display: none;
         }
         .thinking.visible { display: block; }
+        .loading { color: #6b7280; font-style: italic; font-size: .85rem; }
         .input-row {
             display: flex; gap: 6px; padding: 10px;
             border-top: 1px solid #e5e7eb; align-items: flex-end;
@@ -80,7 +81,7 @@
         {% for m in messages %}
             <div class="msg {{ 'user' if m.role == 'user' else 'bot' }}">
                 {% if m.thinking %}
-                    <div class="thinking"><b>Мышление:</b><br><span class="tb" data-raw="{{ m.thinking }}"></span></div>
+                    <div class="thinking{% if show_thinking %} visible{% endif %}"><b>Мышление:</b><br><span class="tb" data-raw="{{ m.thinking }}"></span></div>
                 {% endif %}
                 <div class="content" data-raw="{{ m.content }}"></div>
             </div>
@@ -88,7 +89,7 @@
     </div>
 
     <div class="toolbar">
-        <button id="thinkToggle">Скрыть мышление</button>
+        <button id="thinkToggle">{{ 'Скрыть мышление' if show_thinking else 'Показать мышление' }}</button>
 
         {% if APP_NAME %}
         <span class="muted" style="color:#9ca3af;">powered by {{ APP_NAME }}</span>
@@ -121,7 +122,7 @@ const input = document.getElementById('msgInput');
 const sendBtn = document.getElementById('sendBtn');
 const thinkToggle = document.getElementById('thinkToggle');
 
-let showThinking = true;
+let showThinking = {{ 'true' if show_thinking else 'false' }};
 
 function autosize() {
     input.style.height = 'auto';
@@ -143,11 +144,29 @@ function renderMd(el, raw) { el.innerHTML = raw ? marked.parse(raw) : ''; }
 document.querySelectorAll('.msg .content').forEach(el => renderMd(el, el.dataset.raw || ''));
 document.querySelectorAll('.msg .tb').forEach(el => renderMd(el, el.dataset.raw || ''));
 
-thinkToggle.addEventListener('click', () => {
-    showThinking = !showThinking;
+function applyThinkingVisibility() {
     document.querySelectorAll('.thinking').forEach(el => el.classList.toggle('visible', showThinking));
     thinkToggle.textContent = showThinking ? 'Скрыть мышление' : 'Показать мышление';
+}
+
+function saveThinkingPref(enabled) {
+    // fire-and-forget: состояние живёт на сервере, в рамках чата
+    fetch(`/embed/chat/${FLOW_ID}/${CHAT_ID}/thinking`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            enabled,
+            i: TOKEN.i, u: TOKEN.u, e: TOKEN.e, n: TOKEN.n, s: TOKEN.s,
+        }),
+    }).catch(() => {});
+}
+
+thinkToggle.addEventListener('click', () => {
+    showThinking = !showThinking;
+    applyThinkingVisibility();
+    saveThinkingPref(showThinking);
 });
+applyThinkingVisibility();
 
 function appendUser(text) {
     const d = document.createElement('div');
@@ -160,6 +179,43 @@ function appendUser(text) {
     messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
+/* ---------- Потоковый ответ (SSE) ---------- */
+async function readSSE(res, onEvent) {
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    for (;;) {
+        const {done, value} = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, {stream: true});
+        let idx;
+        while ((idx = buf.indexOf('\n\n')) !== -1) {
+            const raw = buf.slice(0, idx);
+            buf = buf.slice(idx + 2);
+            let event = 'message';
+            let data = '';
+            for (const line of raw.split('\n')) {
+                if (line.startsWith('event:')) event = line.slice(6).trim();
+                else if (line.startsWith('data:')) data += line.slice(5).trim();
+            }
+            if (!data) continue;
+            try { onEvent(event, JSON.parse(data)); } catch (e) {}
+        }
+    }
+}
+
+function makeBotBubble() {
+    const botDiv = document.createElement('div');
+    botDiv.className = 'msg bot';
+    const loading = document.createElement('div');
+    loading.className = 'loading';
+    loading.textContent = 'Генерация ответа…';
+    botDiv.appendChild(loading);
+    messagesEl.appendChild(botDiv);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+    return botDiv;
+}
+
 form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const text = input.value.trim();
@@ -170,12 +226,102 @@ form.addEventListener('submit', async (e) => {
     autosize();
     sendBtn.disabled = true;
 
-    const botDiv = document.createElement('div');
-    botDiv.className = 'msg bot';
-    botDiv.innerHTML = '<em>…</em>';
-    messagesEl.appendChild(botDiv);
-    messagesEl.scrollTop = messagesEl.scrollHeight;
+    const botDiv = makeBotBubble();
 
+    // Блок мышления готовим сразу, показываем с первыми токенами
+    const thinkingEl = document.createElement('div');
+    thinkingEl.className = 'thinking' + (showThinking ? ' visible' : '');
+    thinkingEl.style.display = 'none';
+    const thinkingBody = document.createElement('div');
+    thinkingEl.appendChild(thinkingBody);
+
+    let contentEl = null;
+    let gotAnswer = false;
+
+    const dropLoading = () => {
+        const el = botDiv.querySelector('.loading');
+        if (el) el.remove();
+    };
+    const ensureContent = () => {
+        if (!contentEl) {
+            contentEl = document.createElement('div');
+            contentEl.className = 'content';
+            botDiv.appendChild(contentEl);
+        }
+        return contentEl;
+    };
+    const appendTo = (el, chunk) => {
+        el.dataset.raw = (el.dataset.raw || '') + chunk;
+        el.innerHTML = marked.parse(el.dataset.raw);
+    };
+    const showThinkingBlock = () => {
+        if (!thinkingEl.parentNode) botDiv.insertBefore(thinkingEl, botDiv.firstChild);
+        thinkingEl.style.display = '';
+    };
+
+    let started = false;
+    try {
+        const res = await fetch(`/embed/chat/${FLOW_ID}/${CHAT_ID}/send-stream`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                message: text,
+                i: TOKEN.i, u: TOKEN.u, e: TOKEN.e, n: TOKEN.n, s: TOKEN.s,
+            })
+        });
+        if (!res.ok || !res.body) throw new Error('HTTP ' + res.status);
+        started = true;
+
+        await readSSE(res, (ev, d) => {
+            if (ev === 'thinking') {
+                showThinkingBlock();
+                appendTo(thinkingBody, d.text);
+            } else if (ev === 'answer') {
+                // Плашку «Генерация ответа…» убираем только с началом ответа
+                if (!gotAnswer) { gotAnswer = true; dropLoading(); }
+                appendTo(ensureContent(), d.text);
+            } else if (ev === 'reset') {
+                gotAnswer = true;
+                thinkingEl.remove();
+                dropLoading();
+                const el = ensureContent();
+                el.dataset.raw = d.text;
+                el.innerHTML = marked.parse(d.text);
+            } else if (ev === 'done') {
+                const th = (d.thinking || '').trim();
+                if (th) {
+                    thinkingBody.dataset.raw = th;
+                    thinkingBody.innerHTML = marked.parse(th);
+                    showThinkingBlock();
+                } else {
+                    thinkingEl.remove();
+                }
+                dropLoading();
+                const el = ensureContent();
+                el.dataset.raw = d.text || '';
+                el.innerHTML = marked.parse(d.text || '');
+            } else if (ev === 'error') {
+                botDiv.innerHTML = '<span style="color:#dc2626;">Ошибка: ' + (d.error || 'flow') + '</span>';
+            }
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+        });
+    } catch (err) {
+        // Поток не поднялся — откатываемся на обычный запрос
+        if (!started) {
+            botDiv.remove();
+            await sendFallback(text);
+            return;
+        }
+        botDiv.innerHTML = '<span style="color:#dc2626;">Ошибка: ' + err.message + '</span>';
+    } finally {
+        sendBtn.disabled = false;
+    }
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+});
+
+/* Резервный путь: обычный запрос без стриминга */
+async function sendFallback(text) {
+    const botDiv = makeBotBubble();
     try {
         const res = await fetch(`/embed/chat/${FLOW_ID}/${CHAT_ID}/send`, {
             method: 'POST',
@@ -185,9 +331,7 @@ form.addEventListener('submit', async (e) => {
                 i: TOKEN.i, u: TOKEN.u, e: TOKEN.e, n: TOKEN.n, s: TOKEN.s,
             })
         });
-        if (!res.ok) {
-            throw new Error('HTTP ' + res.status + ': ' + (await res.text()));
-        }
+        if (!res.ok) throw new Error('HTTP ' + res.status);
         const data = await res.json();
         botDiv.innerHTML = '';
         if (data.thinking) {
@@ -202,11 +346,9 @@ form.addEventListener('submit', async (e) => {
         botDiv.appendChild(c);
     } catch (err) {
         botDiv.innerHTML = '<span style="color:#dc2626;">Ошибка: ' + err.message + '</span>';
-    } finally {
-        sendBtn.disabled = false;
     }
     messagesEl.scrollTop = messagesEl.scrollHeight;
-});
+}
 
 input.focus();
 messagesEl.scrollTop = messagesEl.scrollHeight;

@@ -76,7 +76,7 @@ async def validate_embed_token(
     """
     # 1. Интеграция существует и активна
     res = await db.execute(
-        select(EmbedIntegration).where(EmbedIntegration.id == integration_id)
+        select(Integration).where(Integration.id == integration_id)
     )
     integ = res.scalar_one_or_none()
     if not integ or not integ.is_active:
