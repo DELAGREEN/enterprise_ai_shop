@@ -1,68 +1,250 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="ru" data-theme="{{ theme|default('light') }}">
 <head>
     <meta charset="UTF-8">
-    <title>{% block title %}Langflow Agents{% endblock %}</title>
+    <title>{% block title %}{{ APP_NAME }}{% endblock %}</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="icon" type="image/svg+xml" href="{{ APP_ICON_URL }}">
+    <script>
+        /* Тема применяется до первой отрисовки, чтобы не было вспышки */
+        (function () {
+            try {
+                var saved = localStorage.getItem('ui-theme');
+                if (saved === 'light' || saved === 'dark') {
+                    document.documentElement.setAttribute('data-theme', saved);
+                }
+            } catch (e) {}
+        })();
+    </script>
     <style>
+        :root {
+            --bg: #f5f7fb;
+            --surface: #ffffff;
+            --surface-2: #f9fafb;
+            --surface-3: #f3f4f6;
+            --border: #e5e7eb;
+            --border-soft: #f3f4f6;
+            --border-strong: #d1d5db;
+            --text: #1f2937;
+            --text-strong: #111827;
+            --text-muted: #6b7280;
+            --text-dim: #9ca3af;
+
+            --primary: #2563eb;
+            --primary-hover: #1d4ed8;
+            --primary-soft: #dbeafe;
+            --primary-text: #3730a3;
+            --primary-soft-2: #e0e7ff;
+
+            --danger: #dc2626;
+            --danger-soft: #fef2f2;
+            --danger-border: #fecaca;
+            --danger-text: #b91c1c;
+            --success-soft: #d1fae5;
+            --success-text: #065f46;
+            --warning-soft: #fff7ed;
+            --warning-border: #f59e0b;
+            --warning-text: #78350f;
+            --warning-badge: #fef3c7;
+
+            --code-bg: #111827;
+            --code-text: #f9fafb;
+            --inline-code-bg: #e5e7eb;
+            --shadow: 0 1px 3px rgba(0, 0, 0, .06);
+            --shadow-lg: 0 10px 30px rgba(0, 0, 0, .2);
+            --overlay: rgba(0, 0, 0, .4);
+
+            /* Брендинг шапки — переопределяется из админки */
+            --header-bg: {{ APP_HEADER_COLOR }};
+            --header-text: {{ APP_HEADER_TEXT_COLOR }};
+        }
+
+        [data-theme="dark"] {
+            --bg: #0f172a;
+            --surface: #16203a;
+            --surface-2: #1b2540;
+            --surface-3: #223050;
+            --border: #2a3a5c;
+            --border-soft: #223050;
+            --border-strong: #3a4d73;
+            --text: #e2e8f0;
+            --text-strong: #f8fafc;
+            --text-muted: #94a3b8;
+            --text-dim: #64748b;
+
+            --primary: #3b82f6;
+            --primary-hover: #60a5fa;
+            --primary-soft: #1e3a8a;
+            --primary-text: #bfdbfe;
+            --primary-soft-2: #26325c;
+
+            --danger: #ef4444;
+            --danger-soft: #3b1d1d;
+            --danger-border: #7f2b2b;
+            --danger-text: #fca5a5;
+            --success-soft: #163a2f;
+            --success-text: #6ee7b7;
+            --warning-soft: #3a2a12;
+            --warning-border: #b45309;
+            --warning-text: #fcd34d;
+            --warning-badge: #3a2a12;
+
+            --code-bg: #0b1220;
+            --code-text: #e2e8f0;
+            --inline-code-bg: #223050;
+            --shadow: 0 1px 3px rgba(0, 0, 0, .4);
+            --shadow-lg: 0 10px 30px rgba(0, 0, 0, .6);
+            --overlay: rgba(0, 0, 0, .65);
+        }
+
         * { box-sizing: border-box; }
-        body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f5f7fb; color: #1f2937; }
-        header { background: #111827; color: #fff; padding: 14px 24px; display: flex; justify-content: space-between; align-items: center; }
-        header a { color: #fff; text-decoration: none; margin-left: 16px; opacity: .85; }
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+        }
+        header {
+            background: var(--header-bg);
+            color: var(--header-text);
+            padding: 14px 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+        }
+        header a { color: var(--header-text); text-decoration: none; margin-left: 16px; opacity: .85; }
         header a:hover { opacity: 1; }
-        header .logo { font-weight: bold; font-size: 1.1rem; }
+        header nav { display: flex; align-items: center; flex-wrap: wrap; }
         header .user { opacity: .75; font-size: .9rem; margin-left: 16px; }
         main { max-width: 1100px; margin: 0 auto; padding: 24px; }
         h1 { margin-top: 0; }
-        .card { background: #fff; border-radius: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); padding: 20px; }
+        .card {
+            background: var(--surface);
+            border-radius: 10px;
+            box-shadow: var(--shadow);
+            padding: 20px;
+        }
         table { width: 100%; border-collapse: collapse; }
-        th, td { padding: 10px 12px; border-bottom: 1px solid #e5e7eb; text-align: left; vertical-align: top; }
-        th { background: #f9fafb; font-weight: 600; }
-        button { background: #2563eb; color: #fff; border: none; border-radius: 6px; padding: 8px 14px; cursor: pointer; font-size: 0.9rem; }
-        button.secondary { background: #6b7280; }
-        button.danger { background: #dc2626; }
-        button:hover { opacity: 0.9; }
-        .badge { display: inline-block; padding: 3px 8px; border-radius: 999px; font-size: 0.8rem; }
-        .badge.ok { background: #d1fae5; color: #065f46; }
-        .badge.no { background: #fee2e2; color: #991b1b; }
-        .muted { color: #6b7280; }
-        .error { color: #dc2626; margin: 8px 0; }
-        input[type=text], input[type=password] { padding: 8px; border: 1px solid #d1d5db; border-radius: 6px; width: 100%; }
+        th, td { padding: 10px 12px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+        th { background: var(--surface-2); font-weight: 600; }
+        button {
+            background: var(--primary);
+            color: #fff;
+            border: none;
+            border-radius: 6px;
+            padding: 8px 14px;
+            cursor: pointer;
+            font-size: .9rem;
+        }
+        button.secondary { background: var(--text-muted); }
+        button.danger { background: var(--danger); }
+        button:hover { opacity: .9; }
+        button:disabled { opacity: .5; cursor: not-allowed; }
+        .badge { display: inline-block; padding: 3px 8px; border-radius: 999px; font-size: .8rem; }
+        .badge.ok { background: var(--success-soft); color: var(--success-text); }
+        .badge.no { background: var(--danger-soft); color: var(--danger-text); }
+        .muted { color: var(--text-muted); }
+        .error { color: var(--danger); margin: 8px 0; }
+        input[type=text], input[type=password], input[type=color], textarea, select {
+            padding: 8px;
+            border: 1px solid var(--border-strong);
+            border-radius: 6px;
+            width: 100%;
+            background: var(--surface);
+            color: var(--text);
+            font-family: inherit;
+        }
+        code { background: var(--inline-code-bg); padding: 2px 5px; border-radius: 4px; }
+
+        /* ---------- Логотип ---------- */
         header .logo {
             display: inline-flex;
             align-items: center;
-            gap: 8px;
-            color: #fff;
+            gap: 10px;
+            color: var(--header-text);
             text-decoration: none;
             font-weight: bold;
             font-size: 1.1rem;
-            margin-left: 0;         /* чтобы общий margin-left: 16px у ссылок не сдвигал */
+            margin-left: 0;
             opacity: 1;
+            min-width: 0;
         }
-        header .logo:hover { opacity: 0.85; }
+        header .logo:hover { opacity: .85; }
+        header .logo-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        header .logo-img { height: 28px; width: 28px; display: block; border-radius: 6px; }
 
-        header .logo-icon { font-size: 1.2rem; line-height: 1; }
-        header .logo-text { white-space: nowrap; }
-
-        header .logo-img {
-            height: 28px;           /* подгоните под ваш логотип */
-            width: auto;
-            display: block;
+        /* ---------- Иконки из /static/vendor/image ---------- */
+        .ico {
+            display: inline-block;
+            width: 1em;
+            height: 1em;
+            background-color: currentColor;
+            -webkit-mask: var(--ico) center / contain no-repeat;
+            mask: var(--ico) center / contain no-repeat;
+            vertical-align: -0.145em;
+            flex: none;
         }
+        .ico-attach { --ico: url('/static/vendor/image/attach.svg'); }
+        .ico-trash { --ico: url('/static/vendor/image/trash.svg'); }
+        .ico-pencil { --ico: url('/static/vendor/image/pencil.svg'); }
+        .ico-search { --ico: url('/static/vendor/image/search.svg'); }
+        .ico-star { --ico: url('/static/vendor/image/star.svg'); }
+        .ico-star-filled { --ico: url('/static/vendor/image/star-filled.svg'); }
+        .ico-warning { --ico: url('/static/vendor/image/warning.svg'); }
+        .ico-check { --ico: url('/static/vendor/image/check.svg'); }
+        .ico-copy { --ico: url('/static/vendor/image/copy.svg'); }
+        .ico-key { --ico: url('/static/vendor/image/key.svg'); }
+        .ico-user { --ico: url('/static/vendor/image/user.svg'); }
+        .ico-ticket { --ico: url('/static/vendor/image/ticket.svg'); }
+        .ico-globe { --ico: url('/static/vendor/image/globe.svg'); }
+        .ico-clock { --ico: url('/static/vendor/image/clock.svg'); }
+        .ico-arrow-left { --ico: url('/static/vendor/image/arrow-left.svg'); }
+        .ico-arrow-right { --ico: url('/static/vendor/image/arrow-right.svg'); }
+        .ico-arrow-up-right { --ico: url('/static/vendor/image/arrow-up-right.svg'); }
+        .ico-close { --ico: url('/static/vendor/image/close.svg'); }
+        .ico-reset { --ico: url('/static/vendor/image/reset.svg'); }
+        .ico-plus { --ico: url('/static/vendor/image/plus.svg'); }
+        .ico-send { --ico: url('/static/vendor/image/send.svg'); }
+        .ico-sun { --ico: url('/static/vendor/image/sun.svg'); }
+        .ico-moon { --ico: url('/static/vendor/image/moon.svg'); }
+        .ico-file { --ico: url('/static/vendor/image/file.svg'); }
+        .ico-brain { --ico: url('/static/vendor/image/brain.svg'); }
+        .ico-bot { --ico: url('/static/vendor/image/bot.svg'); }
+
+        /* ---------- Переключатель темы ---------- */
+        .theme-toggle {
+            background: transparent;
+            border: 1px solid currentColor;
+            color: inherit;
+            border-radius: 8px;
+            padding: 6px 10px;
+            margin-left: 16px;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-size: .85rem;
+            opacity: .85;
+            line-height: 1;
+        }
+        .theme-toggle:hover { opacity: 1; background: rgba(255, 255, 255, .12); }
+        .theme-toggle .ico { width: 1.05em; height: 1.05em; }
     </style>
     {% block head %}{% endblock %}
 </head>
 <body>
 <header>
     <a href="/" class="logo" aria-label="{{ APP_NAME }}">
-        {% if APP_LOGO_URL %}
-            <img src="{{ APP_LOGO_URL }}" alt="{{ APP_NAME }}" class="logo-img">
-        {% else %}
-            {% if APP_ICON %}<span class="logo-icon">{{ APP_ICON }}</span>{% endif %}
-            <span class="logo-text">{{ APP_NAME }}</span>
+        {% if APP_ICON_URL %}
+            <img src="{{ APP_ICON_URL }}" alt="" class="logo-img">
         {% endif %}
+        <span class="logo-text">{{ APP_NAME }}</span>
     </a>
     <nav>
+        <button type="button" class="theme-toggle" id="themeToggle" title="Переключить тему">
+            <span class="ico ico-moon" id="themeIcon"></span>
+            <span id="themeLabel">Тёмная</span>
+        </button>
         {% if user and user.is_admin %}
             <a href="/admin">Админка</a>
         {% endif %}
@@ -76,5 +258,113 @@
     {% block content %}{% endblock %}
 </main>
 {% block scripts %}{% endblock %}
+
+{# ---------- Тёмная тема для страниц с собственными стилями ---------- #}
+<style>
+    [data-theme="dark"] .card,
+    [data-theme="dark"] .sidebar,
+    [data-theme="dark"] .chat-main,
+    [data-theme="dark"] .agent-card,
+    [data-theme="dark"] .empty-block,
+    [data-theme="dark"] .stat-card,
+    [data-theme="dark"] .filter-bar,
+    [data-theme="dark"] .modal { background: var(--surface); color: var(--text); }
+    [data-theme="dark"] .runtime-item,
+    [data-theme="dark"] .msg.bot { background: var(--surface-2); }
+    [data-theme="dark"] .msg.user,
+    [data-theme="dark"] .chat-item.active { background: var(--primary-soft); color: var(--text); }
+    [data-theme="dark"] .chat-item:hover,
+    [data-theme="dark"] .fav-btn:hover,
+    [data-theme="dark"] .attach-btn:hover,
+    [data-theme="dark"] .btn-field-reset { background: var(--surface-3); }
+    [data-theme="dark"] .chat-item .title,
+    [data-theme="dark"] .stat-card .value { color: var(--text-strong); }
+    [data-theme="dark"] .msg pre { background: var(--code-bg); color: var(--code-text); }
+    [data-theme="dark"] .msg code,
+    [data-theme="dark"] .kv-table code { background: var(--inline-code-bg); color: var(--text); }
+    [data-theme="dark"] .msg pre code { background: transparent; }
+    [data-theme="dark"] th { background: var(--surface-2); }
+    [data-theme="dark"] th, [data-theme="dark"] td,
+    [data-theme="dark"] .kv-table th, [data-theme="dark"] .kv-table td,
+    [data-theme="dark"] .log-row,
+    [data-theme="dark"] .pkg-row { border-color: var(--border); }
+    [data-theme="dark"] input[type=text],
+    [data-theme="dark"] input[type=password],
+    [data-theme="dark"] textarea,
+    [data-theme="dark"] select,
+    [data-theme="dark"] .modal input[type=text],
+    [data-theme="dark"] .modal textarea,
+    [data-theme="dark"] .input-row textarea,
+    [data-theme="dark"] .filter-bar input,
+    [data-theme="dark"] .filter-bar select,
+    [data-theme="dark"] .chat-item .title-input {
+        background: var(--surface);
+        color: var(--text);
+        border-color: var(--border-strong);
+    }
+    [data-theme="dark"] .chat-item .title-input { background: var(--surface-2); }
+    [data-theme="dark"] .chat-item.editing { background: var(--surface-2); }
+    [data-theme="dark"] .thinking { background: var(--warning-soft); color: var(--warning-text); }
+    [data-theme="dark"] .chat-error { background: var(--danger-soft); color: var(--danger-text); border-color: var(--danger-border); }
+    [data-theme="dark"] .file-chip { background: var(--primary-soft-2); color: var(--primary-text); }
+    [data-theme="dark"] .file-chip button { color: var(--primary-text); }
+    [data-theme="dark"] .group-badge { background: var(--primary-soft-2); color: var(--primary-text); }
+    [data-theme="dark"] .group-badge.none,
+    [data-theme="dark"] .pkg-badge-noisy,
+    [data-theme="dark"] .btn-field-reset { background: var(--surface-3); color: var(--text-muted); }
+    [data-theme="dark"] .badge.custom { background: #2e2450; color: #c4b5fd; }
+    [data-theme="dark"] .badge-system { background: var(--warning-badge); color: var(--warning-text); }
+    [data-theme="dark"] .badge.ok { background: var(--success-soft); color: var(--success-text); }
+    [data-theme="dark"] .badge.no { background: var(--danger-soft); color: var(--danger-text); }
+    [data-theme="dark"] .modal-backdrop { background: var(--overlay); }
+    [data-theme="dark"] .admin-tabs { border-bottom-color: var(--border); }
+    [data-theme="dark"] .admin-tabs a { color: var(--text-muted); }
+    [data-theme="dark"] .admin-tabs a:hover { color: var(--text-strong); }
+    [data-theme="dark"] .admin-tabs a.active { color: var(--primary); border-bottom-color: var(--primary); }
+    [data-theme="dark"] .pagination a,
+    [data-theme="dark"] .pagination span { background: var(--surface); color: var(--text); border-color: var(--border-strong); }
+    [data-theme="dark"] .pagination .current { background: var(--primary); color: #fff; border-color: var(--primary); }
+    [data-theme="dark"] .agent-card .desc,
+    [data-theme="dark"] .agent-card .meta,
+    [data-theme="dark"] .chat-item .date,
+    [data-theme="dark"] .empty-hint,
+    [data-theme="dark"] .runtime-item .k,
+    [data-theme="dark"] .stat-card .label { color: var(--text-muted); }
+    [data-theme="dark"] .fav-btn { color: var(--border-strong); }
+    [data-theme="dark"] .fav-btn:hover { color: #f59e0b; }
+</style>
+
+<script>
+(function () {
+    const root = document.documentElement;
+    const btn = document.getElementById('themeToggle');
+    const icon = document.getElementById('themeIcon');
+    const label = document.getElementById('themeLabel');
+    if (!btn) return;
+
+    function paint(theme) {
+        const dark = theme === 'dark';
+        root.setAttribute('data-theme', theme);
+        if (icon) icon.className = 'ico ' + (dark ? 'ico-sun' : 'ico-moon');
+        if (label) label.textContent = dark ? 'Светлая' : 'Тёмная';
+        btn.title = dark ? 'Включить светлую тему' : 'Включить тёмную тему';
+    }
+
+    paint(root.getAttribute('data-theme') === 'dark' ? 'dark' : 'light');
+
+    btn.addEventListener('click', function () {
+        const next = root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+        paint(next);
+        try { localStorage.setItem('ui-theme', next); } catch (e) {}
+        // Запоминаем выбор на сервере, чтобы он пережил смену браузера
+        fetch('/api/theme', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({theme: next}),
+            credentials: 'include',
+        }).catch(function () {});
+    });
+})();
+</script>
 </body>
 </html>

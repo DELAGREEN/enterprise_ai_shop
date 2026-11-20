@@ -3,6 +3,55 @@
 {% block admin_header %}Настройки и диагностика{% endblock %}
 
 {% block admin_content %}
+<style>
+    .brand-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 16px;
+        margin-bottom: 16px;
+    }
+    .brand-grid .field label {
+        display: block;
+        font-size: .82rem;
+        color: var(--text-muted);
+        margin-bottom: 4px;
+    }
+    .brand-grid .field input[type=text] { width: 100%; }
+    .field-hint { font-size: .75rem; color: var(--text-muted); margin-top: 4px; }
+    .icon-row { display: flex; gap: 8px; align-items: center; }
+    .icon-preview {
+        width: 34px; height: 34px; flex: none;
+        border-radius: 8px; border: 1px solid var(--border);
+        background: var(--surface-2); object-fit: contain; padding: 3px;
+    }
+    .color-input {
+        width: 44px; height: 34px; flex: none; padding: 2px;
+        border: 1px solid var(--border-strong); border-radius: 6px;
+        background: var(--surface); cursor: pointer;
+    }
+    .brand-preview { margin-bottom: 14px; }
+    .brand-preview-label {
+        font-size: .75rem; color: var(--text-muted);
+        text-transform: uppercase; letter-spacing: .5px;
+    }
+    .brand-preview-header {
+        margin-top: 6px;
+        display: flex; justify-content: space-between; align-items: center;
+        gap: 12px; padding: 12px 18px; border-radius: 8px;
+        background: var(--header-bg); color: var(--header-text);
+        font-weight: 600;
+    }
+    .brand-preview-logo { display: inline-flex; align-items: center; gap: 10px; }
+    .brand-preview-logo img {
+        width: 26px; height: 26px; border-radius: 6px; display: block;
+    }
+    .brand-preview-nav { font-weight: 400; font-size: .85rem; opacity: .8; }
+    .brand-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .brand-status { font-size: .85rem; color: var(--text-muted); }
+    .brand-status.ok { color: var(--success-text); }
+    .brand-status.err { color: var(--danger-text); }
+</style>
+
 <div class="stats-grid">
     <div class="stat-card">
         <div class="label">Чатов всего</div>
@@ -39,6 +88,75 @@
         <tr><th>flow_publications</th><td>{{ sizes.publications | human_size }}</td></tr>
         <tr><th>Вся база данных</th><td><b>{{ sizes.db | human_size }}</b></td></tr>
     </table>
+</div>
+
+<div class="card" style="margin-bottom: 16px;">
+    <h3 style="margin-top:0;">Оформление</h3>
+    <p class="muted" style="margin-top:0;">
+        Значения из админки важнее переменных окружения. Пустое поле —
+        используется значение из <code>.env</code>.
+    </p>
+
+    <div class="brand-grid">
+        <div class="field">
+            <label for="brandName">Название в шапке</label>
+            <input type="text" id="brandName" value="{{ branding.app_name }}"
+                   placeholder="{{ branding_env.app_name }}">
+            <div class="field-hint">По умолчанию: <code>{{ branding_env.app_name }}</code></div>
+        </div>
+
+        <div class="field">
+            <label for="brandIcon">Иконка сайта (URL)</label>
+            <div class="icon-row">
+                <img id="brandIconPreview" src="{{ branding.app_icon_url }}" alt=""
+                     class="icon-preview">
+                <input type="text" id="brandIcon" value="{{ branding.app_icon_url }}"
+                       placeholder="{{ branding_env.app_icon_url }}">
+            </div>
+            <div class="field-hint">
+                SVG/PNG из <code>/static/vendor/image/</code> или внешний URL.
+                По умолчанию: <code>{{ branding_env.app_icon_url }}</code>
+            </div>
+        </div>
+
+        <div class="field">
+            <label for="brandHeaderColor">Цвет шапки</label>
+            <div class="icon-row">
+                <input type="color" id="brandHeaderColor" value="{{ branding.app_header_color }}"
+                       class="color-input">
+                <input type="text" id="brandHeaderColorText" value="{{ branding.app_header_color }}">
+            </div>
+            <div class="field-hint">По умолчанию: <code>{{ branding_env.app_header_color }}</code></div>
+        </div>
+
+        <div class="field">
+            <label for="brandHeaderTextColor">Цвет текста шапки</label>
+            <div class="icon-row">
+                <input type="color" id="brandHeaderTextColor"
+                       value="{{ branding.app_header_text_color }}" class="color-input">
+                <input type="text" id="brandHeaderTextColorText"
+                       value="{{ branding.app_header_text_color }}">
+            </div>
+            <div class="field-hint">По умолчанию: <code>{{ branding_env.app_header_text_color }}</code></div>
+        </div>
+    </div>
+
+    <div class="brand-preview" id="brandPreview">
+        <span class="brand-preview-label">Предпросмотр шапки</span>
+        <div class="brand-preview-header" id="brandPreviewHeader">
+            <span class="brand-preview-logo">
+                <img id="brandPreviewIcon" src="{{ branding.app_icon_url }}" alt="">
+                <span id="brandPreviewName">{{ branding.app_name }}</span>
+            </span>
+            <span class="brand-preview-nav">Админка · admin · Выйти</span>
+        </div>
+    </div>
+
+    <div class="brand-actions">
+        <button type="button" id="brandSave">Сохранить оформление</button>
+        <button type="button" class="secondary" id="brandReset">Сбросить к .env</button>
+        <span class="brand-status" id="brandStatus"></span>
+    </div>
 </div>
 
 <div class="card" style="margin-bottom: 16px;">
@@ -129,7 +247,7 @@
     <div class="modal" style="width: 760px; max-width: 95vw; max-height: 85vh; display:flex; flex-direction:column;">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
             <h3 style="margin:0;">Установленные библиотеки</h3>
-            <button type="button" class="secondary" id="pkgCloseX">✕</button>
+            <button type="button" class="secondary" id="pkgCloseX"><span class="ico ico-close"></span></button>
         </div>
 
         <div style="display:flex; gap:12px; margin-bottom:10px; flex-wrap:wrap; align-items:center;">
@@ -143,7 +261,7 @@
         <div id="pkgSummary" class="muted" style="font-size:.82rem; margin-bottom:6px;"></div>
 
         <div id="pkgList"
-             style="overflow-y:auto; flex:1; border:1px solid #e5e7eb; border-radius:8px; padding:4px 0; min-height:200px;">
+             style="overflow-y:auto; flex:1; border:1px solid var(--border); border-radius:8px; padding:4px 0; min-height:200px;">
         </div>
 
         <div class="modal-actions" style="margin-top:12px;">
@@ -196,6 +314,100 @@
     }
 
     syncDemoModeUi(demoModeEnabled);
+
+    /* ---------- Оформление ---------- */
+    const brandName        = document.getElementById('brandName');
+    const brandIcon        = document.getElementById('brandIcon');
+    const brandHeaderColor = document.getElementById('brandHeaderColor');
+    const brandHeaderText  = document.getElementById('brandHeaderColorText');
+    const brandTextColor   = document.getElementById('brandHeaderTextColor');
+    const brandTextColorT  = document.getElementById('brandHeaderTextColorText');
+    const brandStatus      = document.getElementById('brandStatus');
+    const previewHeader    = document.getElementById('brandPreviewHeader');
+    const previewName      = document.getElementById('brandPreviewName');
+    const previewIcon      = document.getElementById('brandPreviewIcon');
+    const iconPreview      = document.getElementById('brandIconPreview');
+
+    function paintPreview() {
+        const name = brandName.value.trim() || {{ branding_env.app_name | tojson }};
+        const icon = brandIcon.value.trim() || {{ branding_env.app_icon_url | tojson }};
+        previewName.textContent = name;
+        previewIcon.src = icon;
+        iconPreview.src = icon;
+        previewHeader.style.background = brandHeaderColor.value || 'var(--header-bg)';
+        previewHeader.style.color = brandTextColor.value || 'var(--header-text)';
+        // Логотип в шапке приложения меняется сразу
+        const header = document.querySelector('header');
+        if (header) {
+            header.style.background = brandHeaderColor.value || '';
+            header.style.color = brandTextColor.value || '';
+        }
+        const headerLogo = document.querySelector('header .logo-img');
+        if (headerLogo) headerLogo.src = icon;
+        const headerText = document.querySelector('header .logo-text');
+        if (headerText) headerText.textContent = name;
+        document.title = name;
+    }
+
+    // Пикер и текстовое поле цвета держим синхронными
+    function bindColor(picker, text) {
+        picker.addEventListener('input', () => { text.value = picker.value; paintPreview(); });
+        text.addEventListener('input', () => {
+            if (/^#[0-9a-fA-F]{3,8}$/.test(text.value.trim())) {
+                picker.value = text.value.trim();
+                paintPreview();
+            }
+        });
+    }
+    bindColor(brandHeaderColor, brandHeaderText);
+    bindColor(brandTextColor, brandTextColorT);
+
+    [brandName, brandIcon].forEach(el => el.addEventListener('input', paintPreview));
+    paintPreview();
+
+    async function saveBranding(payload) {
+        brandStatus.textContent = 'Сохраняем…';
+        brandStatus.className = 'brand-status';
+        try {
+            const res = await fetch('/admin/settings/branding', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(payload),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || 'Ошибка сохранения');
+            brandStatus.textContent = 'Сохранено';
+            brandStatus.className = 'brand-status ok';
+            paintPreview();
+        } catch (err) {
+            brandStatus.textContent = err.message || 'Ошибка сохранения';
+            brandStatus.className = 'brand-status err';
+        }
+    }
+
+    document.getElementById('brandSave').addEventListener('click', () => {
+        saveBranding({
+            app_name: brandName.value.trim(),
+            app_icon_url: brandIcon.value.trim(),
+            app_header_color: brandHeaderText.value.trim(),
+            app_header_text_color: brandTextColorT.value.trim(),
+        });
+    });
+
+    document.getElementById('brandReset').addEventListener('click', () => {
+        const env = {{ branding_env | tojson }};
+        brandName.value = env.app_name;
+        brandIcon.value = env.app_icon_url;
+        brandHeaderColor.value = env.app_header_color;
+        brandHeaderText.value = env.app_header_color;
+        brandTextColor.value = env.app_header_text_color;
+        brandTextColorT.value = env.app_header_text_color;
+        saveBranding({
+            app_name: '', app_icon_url: '',
+            app_header_color: '', app_header_text_color: '',
+        });
+    });
+
     /* ---------- Модалка со списком пакетов ---------- */
 const ALL_PACKAGES = {{ runtime.packages | tojson }};
 

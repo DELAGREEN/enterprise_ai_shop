@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 import uuid
 import hashlib
 import secrets
@@ -9,6 +10,7 @@ from langflow_client import LangflowClient, invalidate_flow_cache
 from embed_auth import generate_secret
 
 import config
+import branding
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
@@ -503,6 +505,8 @@ async def admin_settings(request: Request, db: AsyncSession = Depends(get_db)):
                 "system_admin_username": ADMIN_USERNAME,
                 "system_admin_enabled": SYSTEM_ADMIN_ENABLED,
             },
+            "branding": branding.get(),
+            "branding_env": branding.env_defaults(),
             "counts": {
                 "chats": chats_cnt,
                 "chats_deleted": chats_deleted_cnt,
@@ -541,6 +545,30 @@ async def admin_toggle_demo_mode(payload: dict, request: Request, db: AsyncSessi
         "flow_id": config.DEMO_FLOW_ID,
         "name": config.DEMO_FLOW_NAME,
     }
+
+
+@router.post("/settings/branding")
+async def admin_save_branding(
+    payload: dict, request: Request, db: AsyncSession = Depends(get_db)
+):
+    """Оформление интерфейса. Значения из админки важнее .env."""
+    user = _require_admin(request)
+
+    values = {
+        "app_name": payload.get("app_name"),
+        "app_icon_url": payload.get("app_icon_url"),
+        "app_header_color": payload.get("app_header_color"),
+        "app_header_text_color": payload.get("app_header_text_color"),
+    }
+
+    for key in ("app_header_color", "app_header_text_color"):
+        raw = (values.get(key) or "").strip()
+        if raw and not re.fullmatch(r"#[0-9a-fA-F]{3,8}", raw):
+            raise HTTPException(status_code=400, detail=f"Некорректный цвет: {raw}")
+
+    saved = await branding.save(db, values)
+    logger.info("Брендинг обновлён администратором %s", user.get("username"))
+    return {"status": "ok", "branding": saved}
 
 # ---------- GROUPS ----------
 

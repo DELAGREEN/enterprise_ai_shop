@@ -7,7 +7,13 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from config import ADMIN_PASSWORD, ADMIN_USERNAME, SYSTEM_ADMIN_ENABLED
+from config import (
+    ADMIN_PASSWORD,
+    ADMIN_USERNAME,
+    SYSTEM_ADMIN_ENABLED,
+    THEMES,
+    THEME_COOKIE,
+)
 from database import get_db
 from ldap_auth import authenticate_ldap
 from models import User, UserGroup
@@ -132,6 +138,7 @@ async def login_submit(
         resp.set_cookie(
             SESSION_COOKIE, token, max_age=MAX_AGE, httponly=True, samesite="lax",
         )
+        _apply_theme_cookie(resp, user_row)
         return resp
 
     result = await run_in_threadpool(authenticate_ldap, username, password)
@@ -170,6 +177,7 @@ async def login_submit(
     resp.set_cookie(
         SESSION_COOKIE, token, max_age=MAX_AGE, httponly=True, samesite="lax",
     )
+    _apply_theme_cookie(resp, user_row)
     return resp
 
 
@@ -178,3 +186,13 @@ async def logout():
     resp = RedirectResponse(url="/auth/login", status_code=302)
     resp.delete_cookie(SESSION_COOKIE)
     return resp
+
+
+def _apply_theme_cookie(resp, user_row) -> None:
+    """Переносит сохранённую тему пользователя в cookie (для рендера)."""
+    theme = getattr(user_row, "theme", None)
+    if theme in THEMES:
+        resp.set_cookie(
+            THEME_COOKIE, theme, max_age=60 * 60 * 24 * 365,
+            httponly=False, samesite="lax",
+        )

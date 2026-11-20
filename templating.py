@@ -4,7 +4,9 @@ from datetime import datetime, timedelta, timezone
 from fastapi.responses import HTMLResponse
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-from config import LOCAL_TZ_OFFSET_HOURS, APP_ICON, APP_LOGO_URL, APP_NAME
+from config import LOCAL_TZ_OFFSET_HOURS, DEFAULT_THEME, THEMES, THEME_COOKIE
+
+import branding
 
 TEMPLATES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
 
@@ -44,9 +46,12 @@ class Templates:
         self.env.filters["human_size"] = human_size
 
         # Глобалы брендинга — доступны во всех шаблонах без передачи в контекст
-        self.env.globals["APP_ICON"] = APP_ICON
-        self.env.globals["APP_NAME"] = APP_NAME
-        self.env.globals["APP_LOGO_URL"] = APP_LOGO_URL
+        self.env.globals["APP_ICON"] = ""
+        self.env.globals["APP_NAME"] = branding.env_defaults()["app_name"]
+        self.env.globals["APP_LOGO_URL"] = branding.env_defaults()["app_icon_url"]
+        self.env.globals["APP_ICON_URL"] = branding.env_defaults()["app_icon_url"]
+        self.env.globals["APP_HEADER_COLOR"] = branding.env_defaults()["app_header_color"]
+        self.env.globals["APP_HEADER_TEXT_COLOR"] = branding.env_defaults()["app_header_text_color"]
 
     def TemplateResponse(
         self,
@@ -56,8 +61,27 @@ class Templates:
         headers: dict | None = None,
         media_type: str = "text/html",
     ) -> HTMLResponse:
+        ctx = dict(context)
+
+        # Брендинг: значения из админки важнее .env
+        values = branding.get()
+        ctx.setdefault("APP_NAME", values["app_name"])
+        ctx.setdefault("APP_ICON_URL", values["app_icon_url"])
+        ctx.setdefault("APP_HEADER_COLOR", values["app_header_color"])
+        ctx.setdefault("APP_HEADER_TEXT_COLOR", values["app_header_text_color"])
+
+        # Тема: cookie помнит выбор между устройствами и до отрисовки
+        if "theme" not in ctx:
+            theme = DEFAULT_THEME
+            request = ctx.get("request")
+            if request is not None:
+                cookie = request.cookies.get(THEME_COOKIE)
+                if cookie in THEMES:
+                    theme = cookie
+            ctx["theme"] = theme
+
         template = self.env.get_template(name)
-        html = template.render(**context)
+        html = template.render(**ctx)
         return HTMLResponse(
             content=html, status_code=status_code, headers=headers, media_type=media_type
         )

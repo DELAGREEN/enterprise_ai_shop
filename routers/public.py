@@ -5,9 +5,10 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from access import can_user_access_flow, visible_flow_ids   # 👈 RBAC
+from config import THEMES, THEME_COOKIE
 from database import get_db
 from langflow_client import LangflowClient
-from models import AgentFavorite, Chat, FlowPublication
+from models import AgentFavorite, Chat, FlowPublication, User
 from session import get_current_user
 from templating import templates
 
@@ -86,6 +87,36 @@ async def index(request: Request, db: AsyncSession = Depends(get_db)):
             "favorites_count": len(favorites),
         },
     )
+
+
+class ThemePayload(BaseModel):
+    theme: str
+
+
+@router.post("/api/theme")
+async def save_theme(
+    payload: ThemePayload,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Запоминает выбранную тему: cookie (для рендера) и users.theme."""
+    theme = (payload.theme or "").strip().lower()
+    if theme not in THEMES:
+        raise HTTPException(status_code=400, detail="Неизвестная тема")
+
+    user = get_current_user(request)
+    if user and user.get("username"):
+        row = await db.get(User, user["username"])
+        if row is not None:
+            row.theme = theme
+            await db.commit()
+
+    resp = JSONResponse({"status": "ok", "theme": theme})
+    resp.set_cookie(
+        THEME_COOKIE, theme, max_age=60 * 60 * 24 * 365,
+        httponly=False, samesite="lax",
+    )
+    return resp
 
 
 class ToggleFavoritePayload(BaseModel):

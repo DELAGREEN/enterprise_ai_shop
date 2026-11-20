@@ -19,16 +19,16 @@
 
     /* Sidebar */
     .sidebar {
-        background: #fff;
+        background: var(--surface);
         border-radius: 10px;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+        box-shadow: var(--shadow);
         display: flex;
         flex-direction: column;
         overflow: hidden;
     }
     .sidebar-header {
         padding: 12px;
-        border-bottom: 1px solid #e5e7eb;
+        border-bottom: 1px solid var(--border);
         display: flex;
         justify-content: space-between;
         align-items: center;
@@ -46,15 +46,15 @@
         position: relative;
         transition: background .15s;
     }
-    .chat-item:hover { background: #f3f4f6; }
-    .chat-item.active { background: #dbeafe; }
+    .chat-item:hover { background: var(--surface-3); }
+    .chat-item.active { background: var(--primary-soft); }
     .chat-item .title {
         font-weight: 600;
         font-size: .9rem;
         word-break: break-word;
-        color: #111827;
+        color: var(--text-strong);
     }
-    .chat-item .date { font-size: .72rem; color: #6b7280; margin-top: 2px; }
+    .chat-item .date { font-size: .72rem; color: var(--text-muted); margin-top: 2px; }
     .chat-item .link {
         cursor: pointer;
         display: block;
@@ -81,15 +81,15 @@
     .chat-main {
         display: flex;
         flex-direction: column;
-        background: #fff;
+        background: var(--surface);
         border-radius: 10px;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+        box-shadow: var(--shadow);
         overflow: hidden;
         min-width: 0;
     }
     .chat-header {
         padding: 12px 16px;
-        border-bottom: 1px solid #e5e7eb;
+        border-bottom: 1px solid var(--border);
         display: flex;
         justify-content: space-between;
         align-items: center;
@@ -107,45 +107,45 @@
         line-height: 1.5;
         white-space: normal;
     }
-    .msg.user { background: #dbeafe; margin-left: auto; }
-    .msg.bot { background: #f3f4f6; }
+    .msg.user { background: var(--primary-soft); margin-left: auto; }
+    .msg.bot { background: var(--surface-3); }
     .msg pre {
-        background: #111827;
-        color: #f9fafb;
+        background: var(--code-bg);
+        color: var(--code-text);
         padding: 10px;
         border-radius: 6px;
         overflow-x: auto;
     }
     .msg code {
-        background: #e5e7eb;
+        background: var(--inline-code-bg);
         padding: 2px 5px;
         border-radius: 4px;
         font-size: .9em;
     }
     .msg pre code { background: transparent; padding: 0; }
     .thinking {
-        background: #fff7ed;
-        border-left: 3px solid #f59e0b;
+        background: var(--warning-soft);
+        border-left: 3px solid var(--warning-border);
         padding: 10px 14px;
         margin-bottom: 10px;
         font-size: .9rem;
-        color: #78350f;
+        color: var(--warning-text);
         border-radius: 6px;
     }
     .thinking.hidden { display: none; }
-    .empty-hint { color: #6b7280; font-size: .9rem; padding: 8px; }
+    .empty-hint { color: var(--text-muted); font-size: .9rem; padding: 8px; }
     .loading-indicator {
         display: inline-flex;
         align-items: center;
         gap: 10px;
-        color: #4b5563;
+        color: var(--text-muted);
         font-size: 0.9rem;
     }
     .loading-dot {
         width: 10px;
         height: 10px;
         border-radius: 50%;
-        background: #3b82f6;
+        background: var(--primary);
         display: inline-block;
         animation: pulse 1s ease-in-out infinite;
     }
@@ -154,9 +154,9 @@
         50% { opacity: 1; transform: scale(1.1); }
     }
     .chat-error {
-        color: #b91c1c;
-        background: #fef2f2;
-        border: 1px solid #fecaca;
+        color: var(--danger-text);
+        background: var(--danger-soft);
+        border: 1px solid var(--danger-border);
         border-radius: 8px;
         padding: 10px 12px;
         margin-top: 8px;
@@ -167,7 +167,7 @@
         flex-wrap: wrap;
     }
     .retry-btn {
-        background: #2563eb;
+        background: var(--primary);
         color: white;
         border: none;
         border-radius: 6px;
@@ -175,7 +175,7 @@
         font-size: 0.8rem;
         cursor: pointer;
     }
-    .retry-btn:hover { background: #1d4ed8; }
+    .retry-btn:hover { background: var(--primary-hover); }
 
     /* Инлайн-редактирование названия */
     .chat-item .title-input {
@@ -184,14 +184,14 @@
         font-weight: 600;
         font-size: .9rem;
         padding: 2px 6px;
-        border: 1px solid #2563eb;
+        border: 1px solid var(--primary);
         border-radius: 4px;
         outline: none;
-        background: #fff;
+        background: var(--surface);
     }
     .chat-item.editing .actions { display: none; }     /* во время редактирования кнопки не мешают */
     .chat-item.editing { 
-        background: #eff6ff; 
+        background: var(--surface-2); 
         cursor: default; }
 
     /* Поле ввода */
@@ -199,13 +199,13 @@
         display: flex;
         gap: 8px;
         padding: 12px;
-        border-top: 1px solid #e5e7eb;
+        border-top: 1px solid var(--border);
         align-items: flex-end; /* кнопка прижата к низу textarea */
     }
     .input-row textarea {
         flex: 1;
         resize: none;
-        border: 1px solid #d1d5db;
+        border: 1px solid var(--border-strong);
         border-radius: 8px;
         padding: 10px 12px;
         font-family: inherit;
@@ -217,7 +217,7 @@
         outline: none;
         transition: border-color .15s;
     }
-    .input-row textarea:focus { border-color: #2563eb; }
+    .input-row textarea:focus { border-color: var(--primary); }
     .input-row button {
         align-self: flex-end;
         height: 42px;
@@ -225,32 +225,51 @@
     .file-chips {
     display: flex; flex-wrap: wrap; gap: 6px;
     padding: 0 12px 8px;
-    border-top: 1px solid #f3f4f6;
+    border-top: 1px solid var(--border-soft);
     }
     .file-chip {
         display: inline-flex; align-items: center; gap: 6px;
-        background: #e0e7ff; color: #3730a3;
+        background: var(--primary-soft-2); color: var(--primary-text);
         padding: 4px 8px; border-radius: 6px; font-size: .8rem;
     }
     .file-chip button {
-        background: transparent; border: none; color: #3730a3;
+        background: transparent; border: none; color: var(--primary-text);
         cursor: pointer; font-size: .9rem; padding: 0; line-height: 1;
     }
     .attach-btn {
-        background: transparent; border: 1px solid #d1d5db;
-        border-radius: 8px; padding: 0 12px; height: 42px;
-        font-size: 1.1rem; cursor: pointer;
+        background: var(--surface);
+        border: 1px solid var(--border-strong);
+        border-radius: 8px;
+        padding: 0 14px;
+        height: 42px;
+        font-size: .9rem;
+        cursor: pointer;
         align-self: flex-end;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--text-muted);
+        white-space: nowrap;
+        transition: background .15s, color .15s, border-color .15s;
     }
-    .attach-btn:hover { background: #f3f4f6; }
+    .attach-btn:hover {
+        background: var(--surface-3);
+        color: var(--text);
+        border-color: var(--primary);
+    }
+    .attach-btn .ico { width: 1.15em; height: 1.15em; }
+    @media (max-width: 640px) {
+        .attach-btn .attach-label { display: none; }
+        .attach-btn { padding: 0 12px; }
+    }
     .job-status {
         display: flex; align-items: center; gap: 8px;
-        font-size: .9rem; color: #4b5563;
+        font-size: .9rem; color: var(--text-muted);
     }
     .job-status .spinner {
         width: 14px; height: 14px;
-        border: 2px solid #d1d5db;
-        border-top-color: #2563eb;
+        border: 2px solid var(--border-strong);
+        border-top-color: var(--primary);
         border-radius: 50%;
         animation: spin .8s linear infinite;
     }
@@ -279,8 +298,12 @@
                     <div class="date">{{ c.created_at | localtime }}</div>
                 </a>
                 <div class="actions">
-                    <button class="secondary btn-rename" title="Переименовать">✎</button>
-                    <button class="danger btn-delete" title="Удалить">🗑</button>
+                    <button class="secondary btn-rename" title="Переименовать">
+                        <span class="ico ico-pencil"></span>
+                    </button>
+                    <button class="danger btn-delete" title="Удалить">
+                        <span class="ico ico-trash"></span>
+                    </button>
                 </div>
             </div>
             {% endfor %}
@@ -291,8 +314,12 @@
         <div class="chat-header">
             <h2>{{ name }}</h2>
             <div class="toolbar">
-                <button class="secondary" id="deepthinkBtn" title="Показать/скрыть мышление">🧠 DeepThink</button>
-                <button class="secondary" id="searchBtn">🔍 Search</button>
+                <button class="secondary" id="deepthinkBtn" title="Показать/скрыть мышление">
+                    <span class="ico ico-brain"></span> Мышление
+                </button>
+                <button class="secondary" id="searchBtn">
+                    <span class="ico ico-search"></span> Поиск
+                </button>
             </div>
         </div>
         <div class="messages" id="messages">
@@ -300,7 +327,7 @@
             <div class="msg {{ 'user' if m.role == 'user' else 'bot' }}">
                 {% if m.thinking %}
                 <div class="thinking{% if not show_thinking %} hidden{% endif %}">
-                    <strong>🧠 Мышление модели:</strong><br>
+                    <strong><span class="ico ico-brain"></span> Мышление модели:</strong><br>
                     <span class="thinking-body" data-raw="{{ m.thinking }}"></span>
                 </div>
                 {% endif %}
@@ -312,7 +339,10 @@
             {% if supports_files %}
             <input type="file" id="fileInput" multiple hidden>
             <button type="button" class="attach-btn" id="attachBtn"
-                    title="Прикрепить файл">📎</button>
+                    title="Прикрепить файл к сообщению">
+                <span class="ico ico-attach"></span>
+                <span class="attach-label">Прикрепить файл</span>
+            </button>
             {% endif %}
             <textarea id="msgInput" rows="1"
                     placeholder="Напишите сообщение... (Enter — отправить, Shift+Enter — новая строка)"></textarea>
@@ -606,7 +636,7 @@ async function submitChatMessageFallback(text) {
         if (data.thinking) {
             const t = document.createElement('div');
             t.className = 'thinking' + (showThinking ? '' : ' hidden');
-            t.innerHTML = '<strong>🧠 Мышление модели:</strong><br>' + marked.parse(data.thinking);
+            t.innerHTML = '<strong><span class="ico ico-brain"></span> Мышление модели:</strong><br>' + marked.parse(data.thinking);
             botDiv.appendChild(t);
         }
         const content = document.createElement('div');
@@ -827,7 +857,8 @@ function renderFileChips() {
 
         const remove = document.createElement('button');
         remove.type = 'button';
-        remove.textContent = '×';
+        remove.className = 'file-chip-remove';
+        remove.innerHTML = '<span class="ico ico-close"></span>';
         remove.title = 'Убрать';
         remove.addEventListener('click', () => {
             selectedFiles.splice(idx, 1);
@@ -849,7 +880,7 @@ function formatSize(bytes) {
 /* Отправка с файлами */
 async function submitWithFiles(files, text) {
     lastUserMessageText = text;
-    appendUserMessage(text || ('📎 ' + files.map(f => f.name).join(', ')));
+    appendUserMessage(text || ('Файлы: ' + files.map(f => f.name).join(', ')));
     input.value = '';
     autosize();
     selectedFiles = [];
@@ -911,7 +942,7 @@ async function submitWithFiles(files, text) {
                 botDiv.innerHTML = '';
                 const content = document.createElement('div');
                 content.className = 'content';
-                content.innerHTML = marked.parse(job.result || '✅ Файлы обработаны.');
+                content.innerHTML = marked.parse(job.result || 'Файлы обработаны.');
                 botDiv.appendChild(content);
             } else {
                 renderBotError(botDiv, 'Ошибка обработки: ' + (job.error || job.status), null);

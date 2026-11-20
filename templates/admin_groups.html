@@ -5,7 +5,7 @@
 {% block admin_content %}
 <style>
     .badge-system {
-        background: #fef3c7; color: #78350f;
+        background: var(--warning-badge); color: var(--warning-text);
         padding: 3px 8px; border-radius: 999px;
         font-size: .75rem; margin-left: 4px;
         cursor: help;
@@ -65,7 +65,7 @@
                                     onclick="openEditModal(this)">Изменить</button>
                             <button class="danger btn-icon"
                                     title="Удалить группу"
-                                    onclick="deleteGroup('{{ g.id }}', '{{ g.name }}')">🗑</button>
+                                    onclick="deleteGroup('{{ g.id }}', '{{ g.name }}')"><span class="ico ico-trash"></span></button>
                         {% else %}
                             <span class="muted" style="font-size:.85rem;">Системная</span>
                         {% endif %}

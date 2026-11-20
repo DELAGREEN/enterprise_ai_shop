@@ -23,13 +23,13 @@
         <td>
             <span class="cell-name">{{ f.name }}</span>
             {% if f.name_overridden %}
-                <span class="badge custom" title="Переопределено вручную">✎</span>
+                <span class="badge custom" title="Переопределено вручную"><span class="ico ico-pencil"></span></span>
             {% endif %}
         </td>
         <td class="muted">
             <span class="cell-desc">{{ f.description or '—' }}</span>
             {% if f.description_overridden %}
-                <span class="badge custom" title="Переопределено вручную">✎</span>
+                <span class="badge custom" title="Переопределено вручную"><span class="ico ico-pencil"></span></span>
             {% endif %}
         </td>
 
@@ -93,7 +93,7 @@
             <div class="label-row">
                 <label for="editName">Название</label>
                 <button type="button" class="btn-field-reset" id="resetNameBtn"
-                        title="Сбросить к значению из Langflow">↺ Сбросить</button>
+                        title="Сбросить к значению из Langflow"><span class="ico ico-reset"></span> Сбросить</button>
             </div>
             <input type="text" id="editName" maxlength="200">
         </div>
@@ -102,7 +102,7 @@
             <div class="label-row">
                 <label for="editDesc">Описание</label>
                 <button type="button" class="btn-field-reset" id="resetDescBtn"
-                        title="Сбросить к значению из Langflow">↺ Сбросить</button>
+                        title="Сбросить к значению из Langflow"><span class="ico ico-reset"></span> Сбросить</button>
             </div>
             <textarea id="editDesc" rows="4"></textarea>
         </div>

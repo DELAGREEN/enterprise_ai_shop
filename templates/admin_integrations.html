@@ -5,15 +5,15 @@
 {% block admin_content %}
 <style>
     .code-snippet {
-        background: #1f2937; color: #f9fafb; padding: 12px 14px;
+        background: var(--code-bg); color: var(--code-text); padding: 12px 14px;
         border-radius: 8px; font-family: ui-monospace, monospace;
         font-size: .82rem; overflow-x: auto; white-space: pre;
         line-height: 1.5;
     }
     .bi-warn {
         margin-top: 12px; padding: 12px;
-        background: #fef3c7; border-left: 4px solid #f59e0b;
-        border-radius: 6px; font-size: .85rem; color: #78350f;
+        background: var(--warning-badge); border-left: 4px solid #f59e0b;
+        border-radius: 6px; font-size: .85rem; color: var(--warning-text);
     }
     .actions-cell { display: flex; gap: 4px; flex-wrap: wrap; }
     .actions-cell button { white-space: nowrap; }
@@ -74,7 +74,7 @@
                         </button>
                         <button type="button" class="danger btn-del"
                                 data-id="{{ i.id }}"
-                                data-name="{{ i.name }}">🗑</button>
+                                data-name="{{ i.name }}"><span class="ico ico-trash"></span></button>
                     </div>
                 </td>
             </tr>
@@ -82,7 +82,7 @@
         {% if not integrations %}
             <tr>
                 <td colspan="6" class="muted" style="text-align:center; padding:20px;">
-                    Ещё нет ни одной интеграции. Создайте первую →
+                    Ещё нет ни одной интеграции. Создайте первую <span class="ico ico-arrow-right"></span>
                 </td>
             </tr>
         {% endif %}
@@ -113,11 +113,11 @@
         <div class="field">
             <label>Способы аутентификации</label>
             <div style="display:flex; gap:14px; flex-wrap:wrap; margin-top:6px;">
-                <label><input type="checkbox" name="auth" value="api_key" checked> 🔑 API-ключ</label>
-                <label><input type="checkbox" name="auth" value="ldap"> 🧑 LDAP (Basic)</label>
-                <label><input type="checkbox" name="auth" value="kerberos"> 🎫 Kerberos</label>
-                <label><input type="checkbox" name="auth" value="internal"> 👤 Внутренний</label>
-                <label><input type="checkbox" name="auth" value="embed_hmac"> 🌐 Embed (HMAC)</label>
+                <label><input type="checkbox" name="auth" value="api_key" checked> <span class="ico ico-key"></span> API-ключ</label>
+                <label><input type="checkbox" name="auth" value="ldap"> <span class="ico ico-user"></span> LDAP (Basic)</label>
+                <label><input type="checkbox" name="auth" value="kerberos"> <span class="ico ico-ticket"></span> Kerberos</label>
+                <label><input type="checkbox" name="auth" value="internal"> <span class="ico ico-user"></span> Внутренний</label>
+                <label><input type="checkbox" name="auth" value="embed_hmac"> <span class="ico ico-globe"></span> Embed (HMAC)</label>
             </div>
             <div class="muted" style="font-size:.8rem; margin-top:4px;">
                 По умолчанию — API-ключ.
@@ -139,7 +139,7 @@
 {# ─── Модалка "сохраните секреты" ─── #}
 <div id="resultModal" class="modal-backdrop" style="display:none;">
     <div class="modal">
-        <h3>⚠️ Сохраните секреты — показываются один раз</h3>
+        <h3><span class="ico ico-warning"></span> Сохраните секреты — показываются один раз</h3>
         <div id="resultContent"></div>
         <div class="modal-actions">
             <button onclick="location.reload()">OK, я сохранил</button>
@@ -185,7 +185,7 @@
              style="max-height: 400px; overflow-y: auto;"></div>
 
         <div class="bi-warn">
-            ⚠️ <b>Безопасность:</b> <code>SECRET</code> в клиентском JS —
+            <span class="ico ico-warning"></span> <b>Безопасность:</b> <code>SECRET</code> в клиентском JS —
             любой пользователь BI извлечёт его через F12 и подпишет URL от чужого имени.
             <b>Для прода:</b> перенесите подпись на бэкенд BI.
         </div>
@@ -327,7 +327,7 @@ document.getElementById('snippetClose').addEventListener('click', () => {
 document.getElementById('snippetCopy').addEventListener('click', () => {
     navigator.clipboard.writeText(snippetCode.textContent);
     const b = document.getElementById('snippetCopy');
-    b.textContent = '✓ Скопировано';
+    b.innerHTML = '<span class="ico ico-check"></span> Скопировано';
     setTimeout(() => b.textContent = 'Скопировать', 1500);
 });
 
@@ -440,7 +440,7 @@ biUserInput.addEventListener('input', renderBICode);
 document.getElementById('biCopyBtn').addEventListener('click', () => {
     navigator.clipboard.writeText(biCodeOutput.textContent);
     const b = document.getElementById('biCopyBtn');
-    b.textContent = '✓ Скопировано';
+    b.innerHTML = '<span class="ico ico-check"></span> Скопировано';
     setTimeout(() => b.textContent = 'Копировать', 1500);
 });
 

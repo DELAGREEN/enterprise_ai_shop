@@ -27,6 +27,20 @@ class FlowPublication(Base):
     override_description = Column(Text, nullable=True)
 
 
+class AppSetting(Base):
+    """Настройки интерфейса, которые меняются из админки.
+
+    Хранится «ключ → значение». Приоритет: значение из этой таблицы выше,
+    чем переменная окружения (см. ``branding.py``).
+    """
+
+    __tablename__ = "app_settings"
+
+    key = Column(String(64), primary_key=True)
+    value = Column(Text, nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class Chat(Base):
     __tablename__ = "chats"
 
@@ -105,6 +119,8 @@ class User(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     last_login = Column(DateTime, default=datetime.utcnow, nullable=False)
     is_disabled = Column(Boolean, default=False, nullable=False)
+    # Выбранная тема интерфейса ("light" | "dark"), NULL — не выбирал
+    theme = Column(String(10), nullable=True)
 
 
 class Group(Base):

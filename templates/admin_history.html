@@ -139,7 +139,7 @@
                     {% if r.chat_title %}
                         <span><b>{{ r.chat_title }}</b></span>
                     {% endif %}
-                    <span>🕒 {{ r.created_at | localtime }}</span>
+                    <span><span class="ico ico-clock"></span> {{ r.created_at | localtime }}</span>
                     <span class="muted">#{{ r.id }}</span>
                 </div>
                 <div class="log-pair">
@@ -167,9 +167,9 @@
 
 <div class="pagination">
     {% if page > 1 %}
-        <a href="{{ page_url(page - 1) }}">← Назад</a>
+        <a href="{{ page_url(page - 1) }}"><span class="ico ico-arrow-left"></span> Назад</a>
     {% else %}
-        <span class="disabled">← Назад</span>
+        <span class="disabled"><span class="ico ico-arrow-left"></span> Назад</span>
     {% endif %}
 
     {% set start = [1, page - 2] | max %}
@@ -194,9 +194,9 @@
     {% endif %}
 
     {% if page < pages %}
-        <a href="{{ page_url(page + 1) }}">Вперёд →</a>
+        <a href="{{ page_url(page + 1) }}">Вперёд <span class="ico ico-arrow-right"></span></a>
     {% else %}
-        <span class="disabled">Вперёд →</span>
+        <span class="disabled">Вперёд <span class="ico ico-arrow-right"></span></span>
     {% endif %}
 </div>
 {% endif %}

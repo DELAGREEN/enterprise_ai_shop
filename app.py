@@ -9,9 +9,11 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy import and_, or_, select, text
 
 import chat_purge
+import branding
 from database import AsyncSessionLocal, Base, engine
 from langflow_client import LangflowClient
 from models import (
+    AppSetting,
     AgentFavorite,
     AgentGroup,
     Chat,
@@ -79,6 +81,12 @@ MIGRATIONS = [
     "ALTER TABLE chats ADD COLUMN IF NOT EXISTS purge_attempts INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE chats ADD COLUMN IF NOT EXISTS purge_error TEXT",
     "CREATE INDEX IF NOT EXISTS ix_chats_deleted_at ON chats (deleted_at)",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS theme VARCHAR(10)",
+    "CREATE TABLE IF NOT EXISTS app_settings ("
+    " key VARCHAR(64) PRIMARY KEY,"
+    " value TEXT,"
+    " updated_at TIMESTAMP"
+    ")",
 ]
 
 DEFAULT_GROUPS = [
@@ -212,6 +220,10 @@ async def lifespan(app: FastAPI):
     # Засев системных групп ПОСЛЕ создания таблиц
     await _seed_defaults()
     await _seed_demo_mode_publication()
+
+    # Брендинг из админки (важнее .env) — кэшируется в памяти
+    async with AsyncSessionLocal() as db:
+        await branding.load(db)
 
     logger.info("Схема БД инициализирована, системные группы проверены")
     poll_task = asyncio.create_task(_poll_jobs())

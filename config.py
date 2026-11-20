@@ -4,9 +4,22 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ---------- Брендинг ----------
-APP_ICON = os.getenv("APP_ICON", "")
+# Значения по умолчанию. Админка (/admin/settings) имеет приоритет над env.
 APP_NAME = os.getenv("APP_NAME", "Langflow Agents")
+APP_ICON = os.getenv("APP_ICON", "")          # устарело: emoji-иконка
 APP_LOGO_URL = os.getenv("APP_LOGO_URL", "").strip()
+APP_ICON_URL = (
+    os.getenv("APP_ICON_URL", "").strip()
+    or APP_LOGO_URL
+    or "/static/vendor/image/logo.svg"
+)
+APP_HEADER_COLOR = os.getenv("APP_HEADER_COLOR", "#111827")
+APP_HEADER_TEXT_COLOR = os.getenv("APP_HEADER_TEXT_COLOR", "#ffffff")
+
+# ---------- Тема интерфейса ----------
+THEME_COOKIE = "ui_theme"
+THEMES = ("light", "dark")
+DEFAULT_THEME = "light"
 
 # --- Langflow ---
 LANGFLOW_URL = os.getenv("LANGFLOW_URL", "")
