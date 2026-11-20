@@ -55,6 +55,13 @@
         text-overflow: ellipsis; white-space: nowrap;
     }
     .icon-pick.none .nm { color: var(--text); font-weight: 600; }
+    .lib-section-title {
+        font-size: .72rem;
+        text-transform: uppercase;
+        letter-spacing: .5px;
+        color: var(--text-muted);
+        margin: 14px 0 8px;
+    }
 </style>
 
 <div class="card">
@@ -162,20 +169,38 @@
                 <span class="row-icon-empty"><span class="ico ico-close"></span></span>
                 <span class="nm">Без иконки</span>
             </div>
-            {% for i in icons %}
-            <div class="icon-pick" data-icon-id="{{ i.id }}">
+        </div>
+
+        <p class="lib-section-title">Базовые иконки</p>
+        <div class="icon-pick-grid" id="iconPickBase">
+            {% for i in icons if i.base %}
+            <div class="icon-pick" data-icon-id="{{ i.id }}" title="{{ i.name }}">
                 <img src="{{ i.url }}" alt="">
                 <span class="nm">{{ i.name }}</span>
             </div>
             {% endfor %}
         </div>
 
-        {% if not icons %}
-        <p class="muted" style="font-size:.85rem; margin-bottom:0;">
-            Библиотека пуста. Загрузите иконки в
-            <a href="/admin/settings">«Настройках»</a> — {{ icons_hint }}.
+        <p class="lib-section-title">
+            Загруженные иконки
+            <span class="muted" style="font-weight:400; text-transform:none; letter-spacing:0;">
+                (от первой к последней)
+            </span>
         </p>
-        {% endif %}
+        <div class="icon-pick-grid" id="iconPickUploaded">
+            {% for i in icons if not i.base %}
+            <div class="icon-pick" data-icon-id="{{ i.id }}" title="{{ i.name }}">
+                <img src="{{ i.url }}" alt="">
+                <span class="nm">{{ i.name }}</span>
+            </div>
+            {% endfor %}
+        </div>
+
+        <p class="muted" id="iconPickNoUploaded"
+           style="font-size:.85rem; margin-bottom:0;{% if icons | rejectattr('base') | list %}display:none;{% endif %}">
+            Своих иконок пока нет — загрузить можно в
+            <a href="/admin/settings">«Настройках»</a> ({{ icons_hint }}).
+        </p>
 
         <div class="modal-actions">
             <button type="button" class="secondary" id="iconCancel">Закрыть</button>
@@ -405,7 +430,6 @@ document.getElementById('groupsSave').addEventListener('click', async () => {
 
 /* ═══ Иконка агента ═══ */
 const iconModal      = document.getElementById('iconModal');
-const iconPickGrid   = document.getElementById('iconPickGrid');
 const iconModalAgent = document.getElementById('iconModalAgent');
 
 let iconFlowId = null;
@@ -418,7 +442,7 @@ function closeIconModal() {
 }
 
 function markSelectedIcon(iconId) {
-    iconPickGrid.querySelectorAll('.icon-pick').forEach(el => {
+    iconModal.querySelectorAll('.icon-pick').forEach(el => {
         el.classList.toggle('selected', (el.dataset.iconId || '') === (iconId || ''));
     });
 }
@@ -433,7 +457,7 @@ document.querySelectorAll('.btn-icon-pick').forEach(btn => {
     });
 });
 
-iconPickGrid.querySelectorAll('.icon-pick').forEach(el => {
+iconModal.querySelectorAll('.icon-pick').forEach(el => {
     el.addEventListener('click', async () => {
         if (!iconFlowId) return;
         const iconId = el.dataset.iconId || '';

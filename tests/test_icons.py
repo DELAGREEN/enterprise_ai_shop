@@ -43,5 +43,55 @@ class IconHelpersTests(unittest.TestCase):
         self.assertEqual(len(icons.clean_name("x" * 500)), 200)
 
 
+class BaseIconTests(unittest.TestCase):
+    """Базовая библиотека иконок из static/vendor/image/agents."""
+
+    def test_base_icons_not_empty(self):
+        self.assertGreaterEqual(len(icons.base_icons()), 12)
+
+    def test_base_icon_fields(self):
+        for icon in icons.base_icons():
+            self.assertTrue(icon["id"].startswith("base:"))
+            self.assertTrue(icon["name"])
+            self.assertTrue(icon["url"].startswith("/static/vendor/image/agents/"))
+            self.assertTrue(icon["base"])
+
+    def test_every_base_icon_file_exists(self):
+        import os
+
+        for icon in icons.base_icons():
+            rel = icon["url"].lstrip("/")
+            self.assertTrue(os.path.isfile(rel), f"нет файла {rel}")
+
+    def test_base_url_resolution(self):
+        self.assertEqual(
+            icons.url("base:robot"), "/static/vendor/image/agents/robot.svg"
+        )
+
+    def test_unknown_base_slug_gives_empty_url(self):
+        self.assertEqual(icons.url("base:nope"), "")
+
+    def test_is_base(self):
+        self.assertTrue(icons.is_base("base:robot"))
+        self.assertFalse(icons.is_base("abc123"))
+        self.assertFalse(icons.is_base(None))
+        self.assertFalse(icons.is_base(""))
+
+    def test_is_known_base(self):
+        self.assertTrue(icons.is_known("base:robot"))
+        self.assertFalse(icons.is_known("base:nope"))
+
+    def test_is_known_uploaded(self):
+        self.assertTrue(icons.is_known("abc", {"abc"}))
+        self.assertFalse(icons.is_known("abc", {"def"}))
+        self.assertFalse(icons.is_known("abc", None))
+
+    def test_uploaded_url_unchanged(self):
+        self.assertEqual(icons.url("deadbeef"), "/icons/deadbeef")
+
+    def test_base_ids_match_base_icons(self):
+        self.assertEqual(icons.base_ids(), {i["id"] for i in icons.base_icons()})
+
+
 if __name__ == "__main__":
     unittest.main()

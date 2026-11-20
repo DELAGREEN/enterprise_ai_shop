@@ -160,14 +160,16 @@ async def admin_publications(request: Request, db: AsyncSession = Depends(get_db
     res = await db.execute(select(FlowPublication))
     pubs = {p.flow_id: p for p in res.scalars().all()}
 
-    # Библиотека иконок для выбора
+    # Библиотека иконок для выбора: сначала базовые, затем загруженные
+    # в порядке загрузки (от первой к последней)
     icons_res = await db.execute(
-        select(IconLibrary).order_by(IconLibrary.created_at.desc())
+        select(IconLibrary).order_by(IconLibrary.created_at.asc())
     )
-    icon_list = [
-        {"id": i.id, "name": i.name, "url": icons.url(i.id)}
+    uploaded_icons = [
+        {"id": i.id, "name": i.name, "url": icons.url(i.id), "base": False}
         for i in icons_res.scalars().all()
     ]
+    icon_list = icons.base_icons() + uploaded_icons
     icons_by_id = {i["id"]: i for i in icon_list}
 
     items = []
@@ -541,10 +543,11 @@ async def admin_settings(request: Request, db: AsyncSession = Depends(get_db)):
                 {"id": i.id, "name": i.name, "url": icons.url(i.id), "size": i.size}
                 for i in (
                     await db.execute(
-                        select(IconLibrary).order_by(IconLibrary.created_at.desc())
+                        select(IconLibrary).order_by(IconLibrary.created_at.asc())
                     )
                 ).scalars().all()
             ],
+            "base_icons": icons.base_icons(),
             "icons_hint": icons.HINT,
             "counts": {
                 "chats": chats_cnt,
@@ -742,7 +745,11 @@ async def admin_set_flow_icon(
     icon_id = payload.get("icon_id")
     icon_id = icon_id.strip() if isinstance(icon_id, str) else None
     if icon_id:
-        if await db.get(IconLibrary, icon_id) is None:
+        if icons.is_base(icon_id):
+            # Базовые иконки лежат в репозитории: проверяем, что slug известен
+            if not icons.is_known(icon_id):
+                raise HTTPException(status_code=404, detail="Иконка не найдена")
+        elif await db.get(IconLibrary, icon_id) is None:
             raise HTTPException(status_code=404, detail="Иконка не найдена")
 
     # Иконку можно выбрать и до публикации: запись создаётся с is_published=False

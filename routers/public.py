@@ -50,8 +50,8 @@ async def index(request: Request, db: AsyncSession = Depends(get_db)):
     )
     chat_counts = {fid: n for fid, n in cnt_res.all()}
 
-    # Какие иконки из библиотеки реально существуют (битые ссылки не отдаём)
-    icon_ids = {p.icon_id for p in pubs.values() if p.icon_id}
+    # Какие загруженные иконки реально существуют (битые ссылки не отдаём)
+    icon_ids = {p.icon_id for p in pubs.values() if p.icon_id and not icons.is_base(p.icon_id)}
     existing_icons: set[str] = set()
     if icon_ids:
         icon_res = await db.execute(
@@ -76,7 +76,7 @@ async def index(request: Request, db: AsyncSession = Depends(get_db)):
             "name": name,
             "description": desc,
             # Пустая строка — иконки нет (это значение по умолчанию)
-            "icon": icons.url(p.icon_id) if p.icon_id in existing_icons else "",
+            "icon": icons.url(p.icon_id) if icons.is_known(p.icon_id, existing_icons) else "",
             "chat_count": chat_counts.get(fid, 0),
             "is_favorite": fid in favs,
             "favorited_at": favs[fid].created_at if fid in favs else None,
