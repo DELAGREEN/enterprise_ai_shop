@@ -14,6 +14,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import chat_purge
+import uploads
 from database import AsyncSessionLocal, get_db
 from langflow_client import LangflowClient, extract_output_text, parse_thinking
 from models import Chat, ChatMessage, FlowPublication, LLMRequestLog, ProcessingJob
@@ -168,6 +169,10 @@ async def chat_page(
             "chats": chats,
             "messages": messages,
             "supports_files": supports_files,
+            "files_accept": uploads.ACCEPT_ATTR,
+            "files_hint": uploads.HINT,
+            "files_detailed_hint": uploads.DETAILED_HINT,
+            "files_allowed": list(uploads.ALLOWED_EXTENSIONS),
             "show_thinking": bool(chat.show_thinking),
         },
     )

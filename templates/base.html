@@ -50,6 +50,8 @@
             --code-bg: #111827;
             --code-text: #f9fafb;
             --inline-code-bg: #e5e7eb;
+            /* Акцент избранного: золотой в обеих темах */
+            --star: #f59e0b;
             --shadow: 0 1px 3px rgba(0, 0, 0, .06);
             --shadow-lg: 0 10px 30px rgba(0, 0, 0, .2);
             --overlay: rgba(0, 0, 0, .4);
@@ -92,6 +94,8 @@
             --code-bg: #0b1220;
             --code-text: #e2e8f0;
             --inline-code-bg: #223050;
+            /* На тёмном фоне золотой оставляем чуть светлее для контраста */
+            --star: #fbbf24;
             --shadow: 0 1px 3px rgba(0, 0, 0, .4);
             --shadow-lg: 0 10px 30px rgba(0, 0, 0, .6);
             --overlay: rgba(0, 0, 0, .65);
@@ -331,7 +335,8 @@
     [data-theme="dark"] .runtime-item .k,
     [data-theme="dark"] .stat-card .label { color: var(--text-muted); }
     [data-theme="dark"] .fav-btn { color: var(--border-strong); }
-    [data-theme="dark"] .fav-btn:hover { color: #f59e0b; }
+    [data-theme="dark"] .fav-btn:hover,
+    [data-theme="dark"] .fav-btn.active { color: var(--star); }
 </style>
 
 <script>

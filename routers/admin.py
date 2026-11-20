@@ -11,7 +11,15 @@ from embed_auth import generate_secret
 
 import config
 import branding
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    HTTPException,
+    Query,
+    Request,
+    UploadFile,
+)
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 from sqlalchemy import func, select, text, delete
@@ -507,6 +515,11 @@ async def admin_settings(request: Request, db: AsyncSession = Depends(get_db)):
             },
             "branding": branding.get(),
             "branding_env": branding.env_defaults(),
+            "branding_has_asset": branding.has_asset(),
+            "branding_logo_mime": ", ".join(
+                sorted({m.split("/")[-1].upper() for m in branding.LOGO_MIME})
+            ),
+            "branding_logo_max_mb": branding.LOGO_MAX_BYTES // (1024 * 1024),
             "counts": {
                 "chats": chats_cnt,
                 "chats_deleted": chats_deleted_cnt,
@@ -568,6 +581,51 @@ async def admin_save_branding(
 
     saved = await branding.save(db, values)
     logger.info("Брендинг обновлён администратором %s", user.get("username"))
+    return {"status": "ok", "branding": saved}
+
+
+@router.post("/settings/branding/icon")
+async def admin_upload_brand_icon(
+    request: Request,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """Загрузка эмблемы файлом. Картинка хранится в БД (app_assets)."""
+    user = _require_admin(request)
+
+    mime = (file.content_type or "").lower()
+    if mime not in branding.LOGO_MIME:
+        raise HTTPException(
+            status_code=400,
+            detail="Поддерживаются только SVG, PNG, JPEG, WEBP и ICO",
+        )
+
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Пустой файл")
+    if len(data) > branding.LOGO_MAX_BYTES:
+        limit = branding.LOGO_MAX_BYTES // (1024 * 1024)
+        raise HTTPException(
+            status_code=400, detail=f"Файл больше {limit} МБ"
+        )
+
+    saved = await branding.save_logo(db, data, mime)
+    logger.info(
+        "Эмблема загружена администратором %s (%s, %s байт)",
+        user.get("username"), mime, len(data),
+    )
+    return {"status": "ok", "branding": saved}
+
+
+@router.post("/settings/branding/icon/reset")
+async def admin_reset_brand_icon(
+    request: Request, db: AsyncSession = Depends(get_db)
+):
+    """Удаляет загруженную эмблему — снова действует URL из настроек/env."""
+    user = _require_admin(request)
+
+    saved = await branding.delete_logo(db)
+    logger.info("Эмблема удалена администратором %s", user.get("username"))
     return {"status": "ok", "branding": saved}
 
 # ---------- GROUPS ----------

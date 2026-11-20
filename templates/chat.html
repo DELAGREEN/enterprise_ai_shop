@@ -240,16 +240,15 @@
         background: var(--surface);
         border: 1px solid var(--border-strong);
         border-radius: 8px;
-        padding: 0 14px;
+        padding: 0 11px;
         height: 42px;
-        font-size: .9rem;
+        font-size: 1rem;
         cursor: pointer;
         align-self: flex-end;
         display: inline-flex;
         align-items: center;
-        gap: 8px;
+        justify-content: center;
         color: var(--text-muted);
-        white-space: nowrap;
         transition: background .15s, color .15s, border-color .15s;
     }
     .attach-btn:hover {
@@ -257,11 +256,19 @@
         color: var(--text);
         border-color: var(--primary);
     }
-    .attach-btn .ico { width: 1.15em; height: 1.15em; }
-    @media (max-width: 640px) {
-        .attach-btn .attach-label { display: none; }
-        .attach-btn { padding: 0 12px; }
+    .attach-btn .ico { width: 1.25em; height: 1.25em; }
+    .attach-hint {
+        display: flex;
+        align-items: flex-start;
+        gap: 6px;
+        padding: 0 12px 6px;
+        font-size: .75rem;
+        color: var(--text-muted);
+        line-height: 1.35;
     }
+    .attach-hint .ico { width: .95em; height: .95em; margin-top: .2em; flex: none; }
+    .attach-hint.error { color: var(--danger-text); }
+    .attach-hint:empty { display: none; }
     .job-status {
         display: flex; align-items: center; gap: 8px;
         font-size: .9rem; color: var(--text-muted);
@@ -337,11 +344,10 @@
         </div>
         <form class="input-row" id="chatForm" autocomplete="off">
             {% if supports_files %}
-            <input type="file" id="fileInput" multiple hidden>
+            <input type="file" id="fileInput" multiple hidden accept="{{ files_accept }}">
             <button type="button" class="attach-btn" id="attachBtn"
-                    title="Прикрепить файл к сообщению">
+                    title="{{ files_hint }}">
                 <span class="ico ico-attach"></span>
-                <span class="attach-label">Прикрепить файл</span>
             </button>
             {% endif %}
             <textarea id="msgInput" rows="1"
@@ -349,6 +355,10 @@
             <button type="submit">Отправить</button>
         </form>
         {% if supports_files %}
+        <div class="attach-hint" id="fileHint">
+            <span class="ico ico-warning" id="fileHintIcon"></span>
+            <span id="fileHintText">{{ files_detailed_hint }}</span>
+        </div>
         <div class="file-chips" id="fileChips" style="display:none;"></div>
         {% endif %}
     </section>
@@ -826,15 +836,51 @@ let selectedFiles = [];
 const fileInput   = document.getElementById('fileInput');
 const attachBtn   = document.getElementById('attachBtn');
 const fileChipsEl = document.getElementById('fileChips');
+const fileHintEl  = document.getElementById('fileHint');
+const fileHintIcon = document.getElementById('fileHintIcon');
+const fileHintText = document.getElementById('fileHintText');
+
+const ALLOWED_EXT = {{ files_allowed | tojson }};
+const HINT_TEXT   = {{ files_detailed_hint | tojson }};
+
+function fileExt(name) {
+    const dot = (name || '').lastIndexOf('.');
+    return dot === -1 ? '' : name.slice(dot).toLowerCase();
+}
+
+/* Подсказка над чипами: обычная или ошибка про неподдерживаемый файл */
+function setFileHint(message) {
+    if (!fileHintEl) return;
+    const isError = Boolean(message);
+    fileHintEl.classList.toggle('error', isError);
+    if (fileHintIcon) {
+        fileHintIcon.className = 'ico ' + (isError ? 'ico-close' : 'ico-warning');
+    }
+    if (fileHintText) fileHintText.textContent = message || HINT_TEXT;
+}
 
 if (SUPPORTS_FILES && attachBtn) {
     attachBtn.addEventListener('click', () => fileInput.click());
 
     fileInput.addEventListener('change', () => {
+        const rejected = [];
         for (const f of fileInput.files) {
-            selectedFiles.push(f);
+            if (ALLOWED_EXT.includes(fileExt(f.name))) {
+                selectedFiles.push(f);
+            } else {
+                rejected.push(f.name);
+            }
         }
         fileInput.value = '';   // чтобы можно было выбрать тот же файл повторно
+
+        if (rejected.length) {
+            setFileHint(
+                'Не поддерживается: ' + rejected.join(', ') +
+                '. Можно прикреплять только ' + ALLOWED_EXT.join(', ') + '.'
+            );
+        } else {
+            setFileHint('');
+        }
         renderFileChips();
     });
 }

@@ -2,10 +2,12 @@
 
 import asyncio
 import unittest
+from datetime import datetime
 from unittest.mock import patch
 
 import branding
 import config
+from models import AppAsset, AppSetting
 from templating import templates
 
 
@@ -26,21 +28,46 @@ class FakeSetting:
         self.value = value
 
 
-class FakeDb:
-    """Минимальная БД: чтение списка настроек и upsert по ключу."""
+class FakeAsset:
+    """Подмена AppAsset: branding трогает mime/size/data/updated_at."""
 
-    def __init__(self, rows=None):
+    def __init__(self, key="logo", mime="image/png", data=b"", updated_at=None):
+        self.key = key
+        self.mime = mime
+        self.size = len(data)
+        self.data = data
+        self.updated_at = updated_at or datetime(2026, 1, 1, 12, 0, 0)
+
+
+class FakeDb:
+    """Минимальная БД: настройки + загруженные картинки."""
+
+    def __init__(self, rows=None, assets=None):
         self.rows = {r.key: r for r in (rows or [])}
+        self.assets = dict(assets or {})
         self.committed = 0
+        self.deleted = []
 
     async def execute(self, stmt):
         return FakeResult(list(self.rows.values()))
 
     async def get(self, model, key):
+        if model is AppAsset:
+            return self.assets.get(key)
         return self.rows.get(key)
 
     def add(self, obj):
-        self.rows[obj.key] = obj
+        if isinstance(obj, AppSetting):
+            self.rows[obj.key] = obj
+        else:
+            self.assets[obj.key] = obj
+
+    async def delete(self, obj):
+        self.deleted.append(obj)
+        self.assets.pop(obj.key, None)
+
+    async def refresh(self, obj):
+        return obj
 
     async def commit(self):
         self.committed += 1
@@ -212,6 +239,54 @@ class ThemeCookieTests(unittest.TestCase):
         _apply_theme_cookie(resp, Row())
 
         self.assertEqual(resp.calls, [])
+
+
+class LogoAssetTests(unittest.TestCase):
+    """Эмблема, загруженная файлом: хранение в БД и приоритет над URL."""
+
+    def setUp(self):
+        self._env = patch.multiple(
+            config,
+            APP_NAME="Env Name",
+            APP_ICON_URL="/env/icon.svg",
+            APP_HEADER_COLOR="#111111",
+            APP_HEADER_TEXT_COLOR="#eeeeee",
+        )
+        self._env.start()
+        branding.invalidate()
+
+    def tearDown(self):
+        self._env.stop()
+        branding.invalidate()
+
+    def test_asset_url_overrides_configured_url(self):
+        db = FakeDb()
+        asyncio.run(branding.save_logo(db, b"<svg/>", "image/svg+xml"))
+
+        self.assertTrue(branding.has_asset())
+        self.assertTrue(branding.get()["app_icon_url"].startswith("/branding/icon?v="))
+
+    def test_delete_asset_restores_url(self):
+        db = FakeDb()
+        asyncio.run(branding.save_logo(db, b"<svg/>", "image/svg+xml"))
+        asyncio.run(branding.delete_logo(db))
+
+        self.assertFalse(branding.has_asset())
+        self.assertEqual(branding.get()["app_icon_url"], "/env/icon.svg")
+
+    def test_asset_loaded_from_db_on_startup(self):
+        db = FakeDb(assets={"logo": FakeAsset()})
+
+        values = asyncio.run(branding.load(db))
+
+        self.assertIn("/branding/icon?v=", values["app_icon_url"])
+
+    def test_asset_beats_saved_url(self):
+        db = FakeDb()
+        asyncio.run(branding.save(db, {"app_icon_url": "/custom.svg"}))
+        asyncio.run(branding.save_logo(db, b"png", "image/png"))
+
+        self.assertIn("/branding/icon", branding.get()["app_icon_url"])
 
 
 if __name__ == "__main__":

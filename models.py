@@ -6,6 +6,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Integer,
+    LargeBinary,
     String,
     Text,
 )
@@ -38,6 +39,22 @@ class AppSetting(Base):
 
     key = Column(String(64), primary_key=True)
     value = Column(Text, nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class AppAsset(Base):
+    """Загруженные из админки картинки (например, эмблема сайта).
+
+    Лежат в БД, чтобы не терялись при пересборке контейнера и не требовали
+    доступа к файловой системе.
+    """
+
+    __tablename__ = "app_assets"
+
+    key = Column(String(64), primary_key=True)      # "logo"
+    mime = Column(String(100), nullable=False)
+    size = Column(Integer, nullable=False, default=0)
+    data = Column(LargeBinary, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 

@@ -19,6 +19,8 @@
     .brand-grid .field input[type=text] { width: 100%; }
     .field-hint { font-size: .75rem; color: var(--text-muted); margin-top: 4px; }
     .icon-row { display: flex; gap: 8px; align-items: center; }
+    .icon-actions { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+    .icon-actions button { font-size: .82rem; padding: 6px 12px; }
     .icon-preview {
         width: 34px; height: 34px; flex: none;
         border-radius: 8px; border: 1px solid var(--border);
@@ -106,16 +108,29 @@
         </div>
 
         <div class="field">
-            <label for="brandIcon">Иконка сайта (URL)</label>
+            <label for="brandIcon">Эмблема сайта</label>
             <div class="icon-row">
                 <img id="brandIconPreview" src="{{ branding.app_icon_url }}" alt=""
                      class="icon-preview">
                 <input type="text" id="brandIcon" value="{{ branding.app_icon_url }}"
                        placeholder="{{ branding_env.app_icon_url }}">
             </div>
+            <div class="icon-actions">
+                <input type="file" id="brandIconFile" hidden
+                       accept="image/svg+xml,image/png,image/jpeg,image/webp,image/x-icon">
+                <button type="button" class="secondary" id="brandIconUpload">
+                    Загрузить картинку
+                </button>
+                <button type="button" class="secondary" id="brandIconRemove"
+                        {% if not branding_has_asset %}disabled{% endif %}>
+                    Удалить картинку
+                </button>
+            </div>
             <div class="field-hint">
-                SVG/PNG из <code>/static/vendor/image/</code> или внешний URL.
-                По умолчанию: <code>{{ branding_env.app_icon_url }}</code>
+                Файл хранится в БД и имеет приоритет над URL.
+                Форматы: {{ branding_logo_mime }}, до {{ branding_logo_max_mb }} МБ.
+                Без файла действует URL из поля выше
+                (по умолчанию <code>{{ branding_env.app_icon_url }}</code>).
             </div>
         </div>
 
@@ -386,12 +401,72 @@
     }
 
     document.getElementById('brandSave').addEventListener('click', () => {
+        // Если эмблема загружена файлом, её адрес не сохраняем в настройки:
+        // при удалении картинки должен вернуться URL из .env.
+        const iconValue = brandIcon.value.trim();
+        const iconIsAsset = iconValue.startsWith('/branding/icon');
+
         saveBranding({
             app_name: brandName.value.trim(),
-            app_icon_url: brandIcon.value.trim(),
+            app_icon_url: iconIsAsset ? '' : iconValue,
             app_header_color: brandHeaderText.value.trim(),
             app_header_text_color: brandTextColorT.value.trim(),
         });
+    });
+
+    /* ---------- Загрузка эмблемы файлом ---------- */
+    const brandIconFile   = document.getElementById('brandIconFile');
+    const brandIconUpload = document.getElementById('brandIconUpload');
+    const brandIconRemove = document.getElementById('brandIconRemove');
+
+    brandIconUpload.addEventListener('click', () => brandIconFile.click());
+
+    brandIconFile.addEventListener('change', async () => {
+        const file = brandIconFile.files[0];
+        brandIconFile.value = '';
+        if (!file) return;
+
+        brandStatus.textContent = 'Загружаем картинку…';
+        brandStatus.className = 'brand-status';
+
+        const body = new FormData();
+        body.append('file', file);
+        try {
+            const res = await fetch('/admin/settings/branding/icon', {
+                method: 'POST',
+                body,
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || 'Ошибка загрузки');
+            brandIcon.value = data.branding.app_icon_url;
+            brandIconRemove.disabled = false;
+            brandStatus.textContent = 'Картинка загружена';
+            brandStatus.className = 'brand-status ok';
+            paintPreview();
+        } catch (err) {
+            brandStatus.textContent = err.message || 'Ошибка загрузки';
+            brandStatus.className = 'brand-status err';
+        }
+    });
+
+    brandIconRemove.addEventListener('click', async () => {
+        brandStatus.textContent = 'Удаляем картинку…';
+        brandStatus.className = 'brand-status';
+        try {
+            const res = await fetch('/admin/settings/branding/icon/reset', {
+                method: 'POST',
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || 'Ошибка удаления');
+            brandIcon.value = data.branding.app_icon_url;
+            brandIconRemove.disabled = true;
+            brandStatus.textContent = 'Картинка удалена';
+            brandStatus.className = 'brand-status ok';
+            paintPreview();
+        } catch (err) {
+            brandStatus.textContent = err.message || 'Ошибка удаления';
+            brandStatus.className = 'brand-status err';
+        }
     });
 
     document.getElementById('brandReset').addEventListener('click', () => {

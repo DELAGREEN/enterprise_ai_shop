@@ -1,14 +1,15 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import branding
 from access import can_user_access_flow, visible_flow_ids   # 👈 RBAC
 from config import THEMES, THEME_COOKIE
 from database import get_db
 from langflow_client import LangflowClient
-from models import AgentFavorite, Chat, FlowPublication, User
+from models import AgentFavorite, AppAsset, Chat, FlowPublication, User
 from session import get_current_user
 from templating import templates
 
@@ -86,6 +87,19 @@ async def index(request: Request, db: AsyncSession = Depends(get_db)):
             "user": user,
             "favorites_count": len(favorites),
         },
+    )
+
+
+@router.get("/branding/icon")
+async def branding_icon(db: AsyncSession = Depends(get_db)):
+    """Отдаёт загруженную из админки эмблему (или 404, если её нет)."""
+    asset = await db.get(AppAsset, branding.ASSET_LOGO)
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Эмблема не загружена")
+    return Response(
+        content=asset.data,
+        media_type=asset.mime or "application/octet-stream",
+        headers={"Cache-Control": "public, max-age=86400"},
     )
 
 

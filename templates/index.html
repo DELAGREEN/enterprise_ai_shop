@@ -62,8 +62,9 @@
         color: var(--border-strong);
         transition: color .15s, background .15s, transform .1s;
     }
-    .fav-btn:hover { background: var(--surface-3); color: #f59e0b; }
-    .fav-btn.active { color: #f59e0b; }
+    .fav-btn:hover { background: var(--surface-3); color: var(--star); }
+    .fav-btn.active { color: var(--star); }
+    .fav-btn.active .ico { fill: currentColor; }
     .fav-btn .ico { width: 1.15em; height: 1.15em; }
     .fav-btn:active { transform: scale(0.9); }
 

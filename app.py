@@ -13,6 +13,7 @@ import branding
 from database import AsyncSessionLocal, Base, engine
 from langflow_client import LangflowClient
 from models import (
+    AppAsset,
     AppSetting,
     AgentFavorite,
     AgentGroup,
@@ -85,6 +86,13 @@ MIGRATIONS = [
     "CREATE TABLE IF NOT EXISTS app_settings ("
     " key VARCHAR(64) PRIMARY KEY,"
     " value TEXT,"
+    " updated_at TIMESTAMP"
+    ")",
+    "CREATE TABLE IF NOT EXISTS app_assets ("
+    " key VARCHAR(64) PRIMARY KEY,"
+    " mime VARCHAR(100) NOT NULL,"
+    " size INTEGER NOT NULL DEFAULT 0,"
+    " data BYTEA NOT NULL,"
     " updated_at TIMESTAMP"
     ")",
 ]
@@ -266,6 +274,7 @@ async def auth_middleware(request: Request, call_next):
     if (path in PUBLIC_PATHS 
         or path.startswith("/static") 
         or path.startswith("/embed/")
+        or path.startswith("/branding/")
         or path.startswith("/api/v1/")):
         
         return await call_next(request)

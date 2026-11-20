@@ -41,6 +41,7 @@ class RouteSmokeTests(unittest.TestCase):
         self.assert_route_registered("/auth/logout", {"GET"})
         self.assert_route_registered("/api/favorites/toggle", {"POST"})
         self.assert_route_registered("/api/theme", {"POST"})
+        self.assert_route_registered("/branding/icon", {"GET"})
 
     def test_admin_routes_registered(self):
         for path in [
@@ -71,6 +72,8 @@ class RouteSmokeTests(unittest.TestCase):
             "/admin/integrations/toggle",
             "/admin/integrations/delete",
             "/admin/settings/branding",
+            "/admin/settings/branding/icon",
+            "/admin/settings/branding/icon/reset",
             "/admin/settings/demo-mode/toggle",
         ]:
             self.assert_route_registered(path, {"POST"})

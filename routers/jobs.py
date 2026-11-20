@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
+import uploads
 from langflow_client import LangflowClient, extract_error_text, extract_output_text
 from models import Chat, ChatMessage, LLMRequestLog, ProcessingJob
 from session import get_current_user
@@ -213,6 +214,15 @@ async def upload_and_run(
     if not uploaded_files and not (message or "").strip():
         raise HTTPException(
             status_code=400, detail="Нужен текст сообщения или файл"
+        )
+
+    # Агент читает текст из документа, поэтому принимаем только текстовые
+    # форматы и PDF с текстовым слоем.
+    rejected = [f.filename for f in uploaded_files if not uploads.is_allowed(f.filename)]
+    if rejected:
+        raise HTTPException(
+            status_code=400,
+            detail=uploads.rejected_message(rejected[0]),
         )
 
     # Чат, из которого отправили файлы (None — служебная страница ingestion).
