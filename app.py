@@ -22,6 +22,7 @@ from models import (
     EmbedNonce,
     FlowPublication,
     Group,
+    IconLibrary,
     Integration,
     LLMRequestLog,
     ProcessingJob,
@@ -95,6 +96,18 @@ MIGRATIONS = [
     " data BYTEA NOT NULL,"
     " updated_at TIMESTAMP"
     ")",
+    "CREATE TABLE IF NOT EXISTS icon_library ("
+    " id VARCHAR(32) PRIMARY KEY,"
+    " name VARCHAR(200) NOT NULL,"
+    " mime VARCHAR(100) NOT NULL,"
+    " size INTEGER NOT NULL DEFAULT 0,"
+    " data BYTEA NOT NULL,"
+    " uploaded_by VARCHAR,"
+    " created_at TIMESTAMP NOT NULL DEFAULT NOW()"
+    ")",
+    "ALTER TABLE flow_publications ADD COLUMN IF NOT EXISTS icon_id VARCHAR",
+    "CREATE INDEX IF NOT EXISTS ix_flow_publications_icon_id"
+    " ON flow_publications (icon_id)",
 ]
 
 DEFAULT_GROUPS = [
@@ -275,6 +288,7 @@ async def auth_middleware(request: Request, call_next):
         or path.startswith("/static") 
         or path.startswith("/embed/")
         or path.startswith("/branding/")
+        or path.startswith("/icons/")
         or path.startswith("/api/v1/")):
         
         return await call_next(request)

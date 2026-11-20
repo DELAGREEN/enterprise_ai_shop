@@ -11,10 +11,12 @@ from embed_auth import generate_secret
 
 import config
 import branding
+import icons
 from fastapi import (
     APIRouter,
     Depends,
     File,
+    Form,
     HTTPException,
     Query,
     Request,
@@ -22,7 +24,7 @@ from fastapi import (
 )
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
-from sqlalchemy import func, select, text, delete
+from sqlalchemy import func, select, text, delete, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -49,6 +51,7 @@ from models import (
     ChatMessage,
     FlowPublication,
     Group,              
+    IconLibrary,
     LLMRequestLog,
     User,
     UserGroup,
@@ -157,6 +160,16 @@ async def admin_publications(request: Request, db: AsyncSession = Depends(get_db
     res = await db.execute(select(FlowPublication))
     pubs = {p.flow_id: p for p in res.scalars().all()}
 
+    # Библиотека иконок для выбора
+    icons_res = await db.execute(
+        select(IconLibrary).order_by(IconLibrary.created_at.desc())
+    )
+    icon_list = [
+        {"id": i.id, "name": i.name, "url": icons.url(i.id)}
+        for i in icons_res.scalars().all()
+    ]
+    icons_by_id = {i["id"]: i for i in icon_list}
+
     items = []
     for flow in flows:
         fid = flow.get("id")
@@ -176,6 +189,8 @@ async def admin_publications(request: Request, db: AsyncSession = Depends(get_db
                 "description_overridden": bool(p and p.override_description),
                 "is_published": bool(p and p.is_published),
                 "supports_files": bool(p and p.supports_files),
+                "icon_id": p.icon_id if p else None,
+                "icon_url": icons_by_id.get(p.icon_id, {}).get("url", "") if p else "",
             }
         )
 
@@ -188,6 +203,8 @@ async def admin_publications(request: Request, db: AsyncSession = Depends(get_db
             "active_menu": "publications",
             "all_groups": all_groups,       
             "flow_groups": flow_groups,     
+            "icons": icon_list,
+            "icons_hint": icons.HINT,
         },
     )
 
@@ -520,6 +537,15 @@ async def admin_settings(request: Request, db: AsyncSession = Depends(get_db)):
                 sorted({m.split("/")[-1].upper() for m in branding.LOGO_MIME})
             ),
             "branding_logo_max_mb": branding.LOGO_MAX_BYTES // (1024 * 1024),
+            "icon_library": [
+                {"id": i.id, "name": i.name, "url": icons.url(i.id), "size": i.size}
+                for i in (
+                    await db.execute(
+                        select(IconLibrary).order_by(IconLibrary.created_at.desc())
+                    )
+                ).scalars().all()
+            ],
+            "icons_hint": icons.HINT,
             "counts": {
                 "chats": chats_cnt,
                 "chats_deleted": chats_deleted_cnt,
@@ -627,6 +653,115 @@ async def admin_reset_brand_icon(
     saved = await branding.delete_logo(db)
     logger.info("Эмблема удалена администратором %s", user.get("username"))
     return {"status": "ok", "branding": saved}
+
+@router.post("/icons")
+async def admin_upload_icon(
+    request: Request,
+    file: UploadFile = File(...),
+    name: str = Form(""),
+    db: AsyncSession = Depends(get_db),
+):
+    """Загружает иконку в библиотеку. Файл хранится в БД."""
+    user = _require_admin(request)
+
+    mime = (file.content_type or "").lower()
+    if not icons.is_allowed_mime(mime):
+        raise HTTPException(status_code=400, detail=icons.rejected_message(mime))
+
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Пустой файл")
+    if len(data) > icons.ICON_MAX_BYTES:
+        limit = icons.ICON_MAX_BYTES // (1024 * 1024)
+        raise HTTPException(status_code=400, detail=f"Файл больше {limit} МБ")
+
+    fallback = (file.filename or "Иконка").rsplit(".", 1)[0]
+    icon = IconLibrary(
+        id=icons.new_id(),
+        name=icons.clean_name(name, fallback),
+        mime=mime,
+        size=len(data),
+        data=data,
+        uploaded_by=user.get("username"),
+    )
+    db.add(icon)
+    await db.commit()
+
+    logger.info(
+        "Иконка «%s» загружена администратором %s (%s, %s байт)",
+        icon.name, user.get("username"), mime, len(data),
+    )
+    return {
+        "status": "ok",
+        "icon": {
+            "id": icon.id,
+            "name": icon.name,
+            "url": icons.url(icon.id),
+        },
+    }
+
+
+@router.post("/icons/delete")
+async def admin_delete_icon(
+    payload: dict, request: Request, db: AsyncSession = Depends(get_db)
+):
+    """Удаляет иконку из библиотеки и снимает её с агентов."""
+    user = _require_admin(request)
+
+    icon_id = (payload.get("id") or "").strip()
+    icon = await db.get(IconLibrary, icon_id) if icon_id else None
+    if icon is None:
+        raise HTTPException(status_code=404, detail="Иконка не найдена")
+
+    # Снимаем ссылки, иначе у агентов останутся битые иконки
+    await db.execute(
+        update(FlowPublication)
+        .where(FlowPublication.icon_id == icon_id)
+        .values(icon_id=None)
+    )
+    await db.delete(icon)
+    await db.commit()
+
+    logger.info(
+        "Иконка «%s» удалена администратором %s", icon.name, user.get("username")
+    )
+    return {"status": "ok"}
+
+
+@router.post("/flow/icon")
+async def admin_set_flow_icon(
+    payload: dict, request: Request, db: AsyncSession = Depends(get_db)
+):
+    """Назначает агенту иконку из библиотеки или убирает её (icon_id = null)."""
+    user = _require_admin(request)
+
+    flow_id = (payload.get("flow_id") or "").strip()
+    if not flow_id:
+        raise HTTPException(status_code=400, detail="Не указан агент")
+
+    icon_id = payload.get("icon_id")
+    icon_id = icon_id.strip() if isinstance(icon_id, str) else None
+    if icon_id:
+        if await db.get(IconLibrary, icon_id) is None:
+            raise HTTPException(status_code=404, detail="Иконка не найдена")
+
+    # Иконку можно выбрать и до публикации: запись создаётся с is_published=False
+    pub = await _get_or_create_pub(db, flow_id)
+
+    pub.icon_id = icon_id or None
+    pub.updated_at = datetime.utcnow()
+    await db.commit()
+
+    logger.info(
+        "Иконка агента %s → %s (администратор %s)",
+        flow_id, pub.icon_id or "без иконки", user.get("username"),
+    )
+    return {
+        "status": "ok",
+        "flow_id": flow_id,
+        "icon_id": pub.icon_id,
+        "icon_url": icons.url(pub.icon_id),
+    }
 
 # ---------- GROUPS ----------
 

@@ -27,6 +27,28 @@ class FlowPublication(Base):
     override_name = Column(String(200), nullable=True)
     override_description = Column(Text, nullable=True)
 
+    # Иконка агента из библиотеки (icon_library.id).
+    # NULL — без иконки, это значение по умолчанию.
+    icon_id = Column(String, nullable=True, index=True)
+
+
+class IconLibrary(Base):
+    """Библиотека иконок агентов, загружаемых из админки.
+
+    Иконки хранятся в БД: не теряются при пересборке контейнера и не требуют
+    доступа к файловой системе. Отдаются по адресу ``/icons/{id}``.
+    """
+
+    __tablename__ = "icon_library"
+
+    id = Column(String(32), primary_key=True)        # uuid4 hex
+    name = Column(String(200), nullable=False)       # подпись в админке
+    mime = Column(String(100), nullable=False)
+    size = Column(Integer, nullable=False, default=0)
+    data = Column(LargeBinary, nullable=False)
+    uploaded_by = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
 
 class AppSetting(Base):
     """Настройки интерфейса, которые меняются из админки.

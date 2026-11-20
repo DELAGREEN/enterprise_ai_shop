@@ -5,11 +5,12 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import branding
+import icons
 from access import can_user_access_flow, visible_flow_ids   # 👈 RBAC
 from config import THEMES, THEME_COOKIE
 from database import get_db
 from langflow_client import LangflowClient
-from models import AgentFavorite, AppAsset, Chat, FlowPublication, User
+from models import AgentFavorite, AppAsset, Chat, FlowPublication, IconLibrary, User
 from session import get_current_user
 from templating import templates
 
@@ -49,6 +50,15 @@ async def index(request: Request, db: AsyncSession = Depends(get_db)):
     )
     chat_counts = {fid: n for fid, n in cnt_res.all()}
 
+    # Какие иконки из библиотеки реально существуют (битые ссылки не отдаём)
+    icon_ids = {p.icon_id for p in pubs.values() if p.icon_id}
+    existing_icons: set[str] = set()
+    if icon_ids:
+        icon_res = await db.execute(
+            select(IconLibrary.id).where(IconLibrary.id.in_(icon_ids))
+        )
+        existing_icons = {i for (i,) in icon_res.all()}
+
     agents = []
     for flow in flows:
         fid = flow.get("id")
@@ -65,7 +75,8 @@ async def index(request: Request, db: AsyncSession = Depends(get_db)):
             "id": fid,
             "name": name,
             "description": desc,
-            "icon": "",
+            # Пустая строка — иконки нет (это значение по умолчанию)
+            "icon": icons.url(p.icon_id) if p.icon_id in existing_icons else "",
             "chat_count": chat_counts.get(fid, 0),
             "is_favorite": fid in favs,
             "favorited_at": favs[fid].created_at if fid in favs else None,
@@ -87,6 +98,19 @@ async def index(request: Request, db: AsyncSession = Depends(get_db)):
             "user": user,
             "favorites_count": len(favorites),
         },
+    )
+
+
+@router.get("/icons/{icon_id}")
+async def icon_file(icon_id: str, db: AsyncSession = Depends(get_db)):
+    """Отдаёт иконку агента из библиотеки."""
+    icon = await db.get(IconLibrary, icon_id)
+    if icon is None:
+        raise HTTPException(status_code=404, detail="Иконка не найдена")
+    return Response(
+        content=icon.data,
+        media_type=icon.mime or "application/octet-stream",
+        headers={"Cache-Control": "public, max-age=86400"},
     )
 
 

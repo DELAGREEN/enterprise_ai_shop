@@ -21,6 +21,49 @@
     .icon-row { display: flex; gap: 8px; align-items: center; }
     .icon-actions { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
     .icon-actions button { font-size: .82rem; padding: 6px 12px; }
+    .icon-library {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+        gap: 10px;
+        margin-top: 12px;
+    }
+    .icon-tile {
+        position: relative;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--surface-2);
+        padding: 10px 8px 6px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 6px;
+    }
+    .icon-tile img {
+        width: 44px; height: 44px; object-fit: contain; display: block;
+    }
+    .icon-tile-name {
+        font-size: .72rem;
+        color: var(--text-muted);
+        max-width: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .icon-tile-del {
+        position: absolute;
+        top: 4px; right: 4px;
+        background: transparent;
+        border: none;
+        color: var(--text-dim);
+        padding: 3px;
+        border-radius: 5px;
+        cursor: pointer;
+        line-height: 1;
+        opacity: 0;
+        transition: opacity .15s, color .15s, background .15s;
+    }
+    .icon-tile:hover .icon-tile-del { opacity: 1; }
+    .icon-tile-del:hover { color: var(--danger-text); background: var(--danger-soft); }
     .icon-preview {
         width: 34px; height: 34px; flex: none;
         border-radius: 8px; border: 1px solid var(--border);
@@ -220,6 +263,40 @@
         <button type="button" class="secondary" id="brandReset">Сбросить к .env</button>
         <span class="brand-status" id="brandStatus"></span>
     </div>
+</div>
+
+<div class="card" style="margin-bottom: 16px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+        <h3 style="margin:0;">Библиотека иконок</h3>
+        <div class="icon-actions" style="margin-top:0;">
+            <input type="file" id="libIconFile" hidden
+                   accept="image/svg+xml,image/png,image/jpeg,image/webp,image/gif">
+            <button type="button" id="libIconUpload">Загрузить иконку</button>
+            <span class="brand-status" id="libIconStatus"></span>
+        </div>
+    </div>
+    <p class="muted" style="margin-top:8px;">
+        Иконки для агентов. Файлы хранятся в БД. {{ icons_hint }}.
+        Выбрать иконку агенту можно на странице
+        <a href="/admin/publications">«Публикации»</a>; по умолчанию иконки нет.
+    </p>
+
+    {% if icon_library %}
+    <div class="icon-library" id="iconLibrary">
+        {% for i in icon_library %}
+        <div class="icon-tile" data-icon-id="{{ i.id }}">
+            <img src="{{ i.url }}" alt="{{ i.name }}" title="{{ i.name }}">
+            <div class="icon-tile-name">{{ i.name }}</div>
+            <button type="button" class="icon-tile-del" title="Удалить иконку"
+                    data-icon-id="{{ i.id }}" data-icon-name="{{ i.name }}">
+                <span class="ico ico-trash"></span>
+            </button>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <p class="muted" id="iconLibraryEmpty">Пока ни одной иконки не загружено.</p>
+    {% endif %}
 </div>
 
 <div class="card" style="margin-bottom: 16px;">
@@ -473,6 +550,92 @@
     });
 
     fillSwatches();
+
+    /* ---------- Библиотека иконок ---------- */
+    const libIconFile   = document.getElementById('libIconFile');
+    const libIconUpload = document.getElementById('libIconUpload');
+    const libIconStatus = document.getElementById('libIconStatus');
+
+    function libStatus(text, kind) {
+        if (!libIconStatus) return;
+        libIconStatus.textContent = text;
+        libIconStatus.className = 'brand-status' + (kind ? ' ' + kind : '');
+    }
+
+    function iconTileHtml(icon) {
+        // name приходит из имени файла — экранируем (escapeHtml объявлен ниже,
+        // но function declaration поднимается на весь скрипт)
+        const name = escapeHtml(icon.name);
+        return '<div class="icon-tile" data-icon-id="' + escapeHtml(icon.id) + '">' +
+            '<img src="' + escapeHtml(icon.url) + '" alt="" title="' + name + '">' +
+            '<div class="icon-tile-name">' + name + '</div>' +
+            '<button type="button" class="icon-tile-del" title="Удалить иконку" ' +
+                'data-icon-id="' + escapeHtml(icon.id) + '" data-icon-name="' + name + '">' +
+                '<span class="ico ico-trash"></span>' +
+            '</button>' +
+        '</div>';
+    }
+
+    function bindIconDelete(tile) {
+        const btn = tile && tile.querySelector('.icon-tile-del');
+        if (!btn) return;
+        btn.addEventListener('click', async () => {
+            const name = btn.dataset.iconName || 'иконку';
+            if (!window.confirm('Удалить «' + name + '»? Иконка снимется со всех агентов.')) {
+                return;
+            }
+            try {
+                const res = await fetch('/admin/icons/delete', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({id: btn.dataset.iconId}),
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.detail || 'Ошибка удаления');
+                tile.remove();
+                libStatus('Удалено', 'ok');
+            } catch (err) {
+                libStatus(err.message || 'Ошибка удаления', 'err');
+            }
+        });
+    }
+
+    if (libIconUpload && libIconFile) {
+        libIconUpload.addEventListener('click', () => libIconFile.click());
+
+        libIconFile.addEventListener('change', async () => {
+            const file = libIconFile.files[0];
+            libIconFile.value = '';
+            if (!file) return;
+
+            libStatus('Загружаем…');
+            const body = new FormData();
+            body.append('file', file);
+            try {
+                const res = await fetch('/admin/icons', { method: 'POST', body });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.detail || 'Ошибка загрузки');
+                libStatus('Загружено', 'ok');
+
+                // Дорисовываем плитку без перезагрузки страницы
+                const empty = document.getElementById('iconLibraryEmpty');
+                if (empty) empty.remove();
+                let grid = document.getElementById('iconLibrary');
+                if (!grid) {
+                    grid = document.createElement('div');
+                    grid.className = 'icon-library';
+                    grid.id = 'iconLibrary';
+                    libIconUpload.closest('.card').appendChild(grid);
+                }
+                grid.insertAdjacentHTML('afterbegin', iconTileHtml(data.icon));
+                bindIconDelete(grid.firstElementChild);
+            } catch (err) {
+                libStatus(err.message || 'Ошибка загрузки', 'err');
+            }
+        });
+    }
+
+    document.querySelectorAll('.icon-tile').forEach(bindIconDelete);
 
     async function saveBranding(payload) {
         brandStatus.textContent = 'Сохраняем…';
