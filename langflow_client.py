@@ -273,6 +273,58 @@ class LangflowClient:
             logger.exception("Ошибка потока Langflow %s: %s", flow_id, e)
             yield ("error", "Langflow недоступен")
 
+    async def delete_session(self, session_id: str) -> None:
+        """Удаляет память разговора (все сообщения сессии) в Langflow.
+
+        ``session_id`` — это ``chats.id``. Langflow отвечает 204 и в том
+        случае, когда сессии нет, поэтому результат надо проверять отдельно
+        через :meth:`session_message_count`.
+        """
+        if config.ENABLE_DEMO_MODE:
+            return
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            r = await client.delete(
+                f"{self._api_root}/api/v1/monitor/messages/session/{session_id}",
+                headers=self.headers,
+            )
+            if r.status_code not in (200, 204, 404):
+                r.raise_for_status()
+
+    async def session_message_count(self, session_id: str) -> int:
+        """Сколько сообщений осталось у сессии в Langflow."""
+        if config.ENABLE_DEMO_MODE:
+            return 0
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            r = await client.get(
+                f"{self._api_root}/api/v1/monitor/messages",
+                params={"session_id": session_id},
+                headers=self.headers,
+            )
+            r.raise_for_status()
+            data = r.json()
+        return len(data) if isinstance(data, list) else 0
+
+    async def delete_sessions(self, session_ids: list[str]) -> int:
+        """Массовое удаление сессий (Langflow принимает до 500 за раз)."""
+        if config.ENABLE_DEMO_MODE or not session_ids:
+            return 0
+
+        deleted = 0
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            for i in range(0, len(session_ids), 500):
+                batch = session_ids[i : i + 500]
+                r = await client.delete(
+                    f"{self._api_root}/api/v1/monitor/messages/sessions",
+                    json=batch,
+                    headers=self.headers,
+                )
+                r.raise_for_status()
+                try:
+                    deleted += int((r.json() or {}).get("deleted_count") or 0)
+                except (ValueError, TypeError):
+                    pass
+        return deleted
+
     async def get_flow(self, flow_id: str) -> dict:
         """Полное определение flow (нужно для tweaks файловых компонентов)."""
         async with httpx.AsyncClient(timeout=30.0) as client:

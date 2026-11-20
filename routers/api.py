@@ -172,7 +172,12 @@ async def chat_send(
     chat = None
     if payload.chat_id:
         chat = await db.get(Chat, payload.chat_id)
-        if not chat or chat.flow_id != flow_id or chat.user_id != user["username"]:
+        if (
+            not chat
+            or chat.flow_id != flow_id
+            or chat.user_id != user["username"]
+            or chat.deleted_at is not None
+        ):
             raise HTTPException(404, "Чат не найден")
     else:
         # Ищем последний чат (переиспользуем за последние 24 часа)
@@ -184,6 +189,7 @@ async def chat_send(
                 Chat.flow_id == flow_id,
                 Chat.user_id == user["username"],
                 Chat.updated_at >= cutoff,
+                Chat.deleted_at.is_(None),
             )
             .order_by(Chat.updated_at.desc())
             .limit(1)
@@ -268,7 +274,12 @@ async def chat_history(
             raise HTTPException(403, "Агент недоступен")
 
     chat = await db.get(Chat, chat_id)
-    if not chat or chat.flow_id != flow_id or chat.user_id != user["username"]:
+    if (
+        not chat
+        or chat.flow_id != flow_id
+        or chat.user_id != user["username"]
+        or chat.deleted_at is not None
+    ):
         raise HTTPException(404, "Чат не найден")
 
     msgs_res = await db.execute(
@@ -311,7 +322,11 @@ async def list_chats(
 
     res = await db.execute(
         select(Chat)
-        .where(Chat.flow_id == flow_id, Chat.user_id == user["username"])
+        .where(
+            Chat.flow_id == flow_id,
+            Chat.user_id == user["username"],
+            Chat.deleted_at.is_(None),
+        )
         .order_by(Chat.updated_at.desc())
     )
     chats = list(res.scalars().all())

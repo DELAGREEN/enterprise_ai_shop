@@ -42,7 +42,7 @@ async def index(request: Request, db: AsyncSession = Depends(get_db)):
     # Чаты
     cnt_res = await db.execute(
         select(Chat.flow_id, func.count(Chat.id))
-        .where(Chat.user_id == username)
+        .where(Chat.user_id == username, Chat.deleted_at.is_(None))
         .group_by(Chat.flow_id)
     )
     chat_counts = {fid: n for fid, n in cnt_res.all()}

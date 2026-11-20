@@ -433,7 +433,14 @@ async def admin_settings(request: Request, db: AsyncSession = Depends(get_db)):
     def _scalar(q):
         return q
 
-    chats_cnt = (await db.execute(select(func.count(Chat.id)))).scalar() or 0
+    chats_cnt = (
+        await db.execute(select(func.count(Chat.id)).where(Chat.deleted_at.is_(None)))
+    ).scalar() or 0
+    chats_deleted_cnt = (
+        await db.execute(
+            select(func.count(Chat.id)).where(Chat.deleted_at.isnot(None))
+        )
+    ).scalar() or 0
     msgs_cnt = (await db.execute(select(func.count(ChatMessage.id)))).scalar() or 0
     logs_cnt = (await db.execute(select(func.count(LLMRequestLog.id)))).scalar() or 0
     pub_cnt = (
@@ -498,6 +505,7 @@ async def admin_settings(request: Request, db: AsyncSession = Depends(get_db)):
             },
             "counts": {
                 "chats": chats_cnt,
+                "chats_deleted": chats_deleted_cnt,
                 "messages": msgs_cnt,
                 "logs": logs_cnt,
                 "published": pub_cnt,

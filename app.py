@@ -8,6 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy import and_, or_, select, text
 
+import chat_purge
 from database import AsyncSessionLocal, Base, engine
 from langflow_client import LangflowClient
 from models import (
@@ -72,6 +73,12 @@ MIGRATIONS = [
     "ALTER TABLE processing_jobs ADD COLUMN IF NOT EXISTS history_saved BOOLEAN NOT NULL DEFAULT FALSE",
     "ALTER TABLE flow_publications ADD COLUMN IF NOT EXISTS supports_files BOOLEAN NOT NULL DEFAULT FALSE",
     "ALTER TABLE chats ADD COLUMN IF NOT EXISTS show_thinking BOOLEAN NOT NULL DEFAULT FALSE",
+    "ALTER TABLE chats ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP",
+    "ALTER TABLE chats ADD COLUMN IF NOT EXISTS deleted_by VARCHAR",
+    "ALTER TABLE chats ADD COLUMN IF NOT EXISTS langflow_purged_at TIMESTAMP",
+    "ALTER TABLE chats ADD COLUMN IF NOT EXISTS purge_attempts INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE chats ADD COLUMN IF NOT EXISTS purge_error TEXT",
+    "CREATE INDEX IF NOT EXISTS ix_chats_deleted_at ON chats (deleted_at)",
 ]
 
 DEFAULT_GROUPS = [
@@ -176,6 +183,25 @@ async def _poll_jobs():
         await asyncio.sleep(10)
 
 
+async def _poll_chat_purges():
+    """Добирает чистку памяти удалённых чатов в Langflow.
+
+    Пользователь видит чат удалённым сразу, а память в Langflow вычищается
+    следом — здесь же подхватываются неудавшиеся попытки (Langflow лежал,
+    сеть отвалилась, флоу принадлежит другому пользователю Langflow).
+    """
+    while True:
+        try:
+            count = await chat_purge.purge_pending()
+            if count:
+                logger.info("Память удалённых чатов вычищена: %s", count)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning("Ошибка поллера чистки чатов: %s", exc)
+        await asyncio.sleep(60)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
@@ -189,14 +215,17 @@ async def lifespan(app: FastAPI):
 
     logger.info("Схема БД инициализирована, системные группы проверены")
     poll_task = asyncio.create_task(_poll_jobs())
+    purge_task = asyncio.create_task(_poll_chat_purges())
     try:
         yield
     finally:
+        purge_task.cancel()
         poll_task.cancel()
-        try:
-            await poll_task
-        except asyncio.CancelledError:
-            pass
+        for task in (poll_task, purge_task):
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
         await engine.dispose()
         logger.info("Приложение остановлено")
 

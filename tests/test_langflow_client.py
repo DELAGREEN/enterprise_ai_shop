@@ -499,5 +499,87 @@ class StreamOutputTextTests(unittest.TestCase):
         self.assertEqual(_stream_output_text({}), "")
 
 
+class SessionPurgeClientTests(unittest.TestCase):
+    """Удаление памяти разговора в Langflow (session_id == chats.id)."""
+
+    def setUp(self):
+        self._demo = config.ENABLE_DEMO_MODE
+        config.ENABLE_DEMO_MODE = False
+        FakeAsyncClient.calls = []
+        FakeAsyncClient.responses = []
+
+    def tearDown(self):
+        config.ENABLE_DEMO_MODE = self._demo
+
+    def _client(self):
+        return LangflowClient(
+            base_url="http://langflow:7860/api/v1", api_key="test-key"
+        )
+
+    def _run(self, coro):
+        with patch("langflow_client.httpx.AsyncClient", FakeAsyncClient):
+            return asyncio.run(coro)
+
+    def test_delete_session_hits_monitor_endpoint(self):
+        FakeAsyncClient.responses = [FakeResponse(204)]
+
+        self._run(self._client().delete_session("chat-1"))
+
+        method, url, *_ = FakeAsyncClient.calls[0]
+        self.assertEqual(method, "DELETE")
+        self.assertEqual(
+            url, "http://langflow:7860/api/v1/monitor/messages/session/chat-1"
+        )
+
+    def test_delete_session_tolerates_missing_session(self):
+        FakeAsyncClient.responses = [FakeResponse(404)]
+
+        self._run(self._client().delete_session("chat-1"))   # не должно упасть
+
+    def test_delete_session_raises_on_server_error(self):
+        FakeAsyncClient.responses = [FakeResponse(500)]
+
+        with self.assertRaises(httpx.HTTPStatusError):
+            self._run(self._client().delete_session("chat-1"))
+
+    def test_session_message_count(self):
+        FakeAsyncClient.responses = [FakeResponse(200, [{"id": 1}, {"id": 2}])]
+
+        count = self._run(self._client().session_message_count("chat-1"))
+
+        self.assertEqual(count, 2)
+        method, url, params, _ = FakeAsyncClient.calls[0]
+        self.assertEqual(method, "GET")
+        self.assertEqual(url, "http://langflow:7860/api/v1/monitor/messages")
+        self.assertEqual(params, {"session_id": "chat-1"})
+
+    def test_session_message_count_handles_empty_body(self):
+        FakeAsyncClient.responses = [FakeResponse(200, [])]
+
+        self.assertEqual(self._run(self._client().session_message_count("c")), 0)
+
+    def test_delete_sessions_splits_into_batches_of_500(self):
+        FakeAsyncClient.responses = [
+            FakeResponse(200, {"deleted_count": 500}),
+            FakeResponse(200, {"deleted_count": 20}),
+        ]
+
+        deleted = self._run(self._client().delete_sessions(["s"] * 520))
+
+        self.assertEqual(deleted, 520)
+        self.assertEqual(len(FakeAsyncClient.calls), 2)
+
+    def test_delete_sessions_without_ids_does_nothing(self):
+        self.assertEqual(self._run(self._client().delete_sessions([])), 0)
+        self.assertEqual(FakeAsyncClient.calls, [])
+
+    def test_demo_mode_is_noop(self):
+        config.ENABLE_DEMO_MODE = True
+
+        self._run(self._client().delete_session("chat-1"))
+        self.assertEqual(self._run(self._client().session_message_count("c")), 0)
+        self.assertEqual(FakeAsyncClient.calls, [])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -10,12 +10,13 @@ from fastapi.responses import (
     StreamingResponse,
 )
 from pydantic import BaseModel
-from sqlalchemy import delete, select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import chat_purge
 from database import AsyncSessionLocal, get_db
 from langflow_client import LangflowClient, extract_output_text, parse_thinking
-from models import Chat, ChatMessage, FlowPublication, LLMRequestLog
+from models import Chat, ChatMessage, FlowPublication, LLMRequestLog, ProcessingJob
 from session import get_current_user
 from streaming import iter_flow_events, sse_pack
 from templating import templates
@@ -55,7 +56,11 @@ async def _flow_name(flow_id: str, db: AsyncSession) -> str:
 async def _get_user_chats(db: AsyncSession, flow_id: str, user_id: str):
     result = await db.execute(
         select(Chat)
-        .where(Chat.flow_id == flow_id, Chat.user_id == user_id)
+        .where(
+            Chat.flow_id == flow_id,
+            Chat.user_id == user_id,
+            Chat.deleted_at.is_(None),
+        )
         .order_by(Chat.updated_at.desc())
     )
     return list(result.scalars().all())
@@ -69,6 +74,7 @@ async def _get_chat_or_404(
             Chat.id == chat_id,
             Chat.flow_id == flow_id,
             Chat.user_id == user_id,
+            Chat.deleted_at.is_(None),
         )
     )
     chat = result.scalar_one_or_none()
@@ -466,9 +472,34 @@ async def chat_delete(
     user = get_current_user(request)
     chat = await _get_chat_or_404(db, chat_id, flow_id, user["username"])
 
-    # Явно чистим сообщения (не полагаемся на каскад БД)
-    await db.execute(delete(ChatMessage).where(ChatMessage.chat_id == chat.id))
-    await db.delete(chat)
+    # Мягкое удаление: из UI и API чат исчезает, но переписка остаётся
+    # в БД для аудита. Память разговора в Langflow вычищаем следом —
+    # если он недоступен, доберёт поллер.
+    chat.deleted_at = datetime.utcnow()
+    chat.deleted_by = user["username"]
+
+    # Задачи в полёте иначе допишут ответ и создадут сессию заново
+    await db.execute(
+        update(ProcessingJob)
+        .where(
+            ProcessingJob.chat_id == chat.id,
+            ProcessingJob.status.in_(["queued", "running"]),
+        )
+        .values(history_saved=True)
+    )
     await db.commit()
-    logger.info("Пользователь %s удалил чат %s", user["username"], chat.id)
-    return {"status": "ok"}
+
+    try:
+        purged = await chat_purge.purge_deleted_chat(db, chat)
+        await db.commit()
+    except Exception:  # noqa: BLE001
+        logger.exception("Не удалось вычистить память чата %s", chat.id)
+        purged = False
+
+    logger.info(
+        "Пользователь %s удалил чат %s (память в Langflow: %s)",
+        user["username"],
+        chat.id,
+        "вычищена" if purged else "в очереди",
+    )
+    return {"status": "ok", "langflow_purged": purged}

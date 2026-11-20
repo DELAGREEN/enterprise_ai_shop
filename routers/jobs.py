@@ -106,6 +106,13 @@ async def save_job_history(db: AsyncSession, job: ProcessingJob) -> bool:
         logger.warning("Чат %s для job %s не найден", job.chat_id, job.id)
         return True
 
+    if chat.deleted_at is not None:
+        # Чат удалили, пока задача считалась. В историю не пишем, но память
+        # в Langflow могли создать заново — поллер вычистит её повторно.
+        chat.langflow_purged_at = None
+        logger.info("Чат %s удалён, результат job %s не сохраняем", chat.id, job.id)
+        return True
+
     answer = ""
     if job.status == "completed" and job.result:
         answer = job.result
@@ -217,6 +224,7 @@ async def upload_and_run(
                 Chat.id == session_id,
                 Chat.flow_id == flow_id,
                 Chat.user_id == user["username"],
+                Chat.deleted_at.is_(None),
             )
         )
         chat = chat_res.scalar_one_or_none()

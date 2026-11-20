@@ -73,6 +73,21 @@ async def _get_or_create_chat(db, flow_id, user_id):
     return chat
 
 
+async def _get_chat_or_404(
+    db: AsyncSession, chat_id: str, flow_id: str, user_id: str
+) -> Chat:
+    """Чат пользователя; мягко удалённый считается несуществующим."""
+    chat = await db.get(Chat, chat_id)
+    if (
+        not chat
+        or chat.flow_id != flow_id
+        or chat.user_id != user_id
+        or chat.deleted_at is not None
+    ):
+        raise HTTPException(status_code=404, detail="Чат не найден")
+    return chat
+
+
 @router.get("/embed/chat/{flow_id}", response_class=HTMLResponse)
 async def embed_chat(
     flow_id: str,
@@ -183,9 +198,7 @@ async def embed_chat_send(
     if pub_res.scalar_one_or_none() is None:
         raise HTTPException(status_code=403, detail="Агент больше не опубликован")
 
-    chat = await db.get(Chat, chat_id)
-    if not chat or chat.flow_id != flow_id or chat.user_id != payload.u:
-        raise HTTPException(status_code=404, detail="Чат не найден")
+    chat = await _get_chat_or_404(db, chat_id, flow_id, payload.u)
 
     text_in = payload.message.strip()
     if not text_in:
@@ -290,9 +303,7 @@ async def embed_chat_send_stream(
     if pub_res.scalar_one_or_none() is None:
         raise HTTPException(status_code=403, detail="Агент больше не опубликован")
 
-    chat = await db.get(Chat, chat_id)
-    if not chat or chat.flow_id != flow_id or chat.user_id != payload.u:
-        raise HTTPException(status_code=404, detail="Чат не найден")
+    chat = await _get_chat_or_404(db, chat_id, flow_id, payload.u)
 
     text_in = payload.message.strip()
     if not text_in:
@@ -407,9 +418,7 @@ async def embed_chat_thinking(
     if integ.flow_id != flow_id:
         raise HTTPException(status_code=403, detail="Токен выдан для другого flow")
 
-    chat = await db.get(Chat, chat_id)
-    if not chat or chat.flow_id != flow_id or chat.user_id != payload.u:
-        raise HTTPException(status_code=404, detail="Чат не найден")
+    chat = await _get_chat_or_404(db, chat_id, flow_id, payload.u)
 
     chat.show_thinking = bool(payload.enabled)
     await db.commit()
@@ -430,9 +439,7 @@ async def embed_sso(
     """Хендофф из iframe в полную версию приложения: ставим сессию и редиректим."""
     await validate_embed_token(db, request, i, u, e, n, s)
 
-    chat = await db.get(Chat, chat_id)
-    if not chat or chat.flow_id != flow_id or chat.user_id != u:
-        raise HTTPException(status_code=404, detail="Чат не найден")
+    chat = await _get_chat_or_404(db, chat_id, flow_id, u)
 
     await _sync_embed_user(db, u)
 

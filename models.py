@@ -41,6 +41,18 @@ class Chat(Base):
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
     )
 
+    # ---------- Мягкое удаление ----------
+    # Пользователь «удалил» чат: из UI и API он исчезает, но переписка
+    # остаётся в БД для аудита и разбора инцидентов.
+    deleted_at = Column(DateTime, nullable=True, index=True)
+    deleted_by = Column(String, nullable=True)      # username того, кто удалил
+
+    # Память разговора в Langflow (session_id == chats.id) вычищена.
+    # NULL — ещё не вычищена, поллер доберёт.
+    langflow_purged_at = Column(DateTime, nullable=True)
+    purge_attempts = Column(Integer, default=0, nullable=False)
+    purge_error = Column(Text, nullable=True)       # причина последней неудачи
+
 
 class ChatMessage(Base):
     __tablename__ = "chat_messages"
