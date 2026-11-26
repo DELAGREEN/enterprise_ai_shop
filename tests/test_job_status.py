@@ -1,11 +1,13 @@
 import asyncio
 import json
 import unittest
-from datetime import datetime
+from datetime import datetime, timezone
 
 from models import Chat, ChatMessage, LLMRequestLog
 from routers.jobs import (
     EMPTY_RESULT_HINT,
+    _iso_utc,
+    _progress_of,
     apply_job_status,
     build_input_value,
     save_job_history,
@@ -273,6 +275,63 @@ class InterruptedAtStageTests(unittest.TestCase):
         apply_job_status(job, status)
 
         self.assertEqual(job.error, first)
+
+
+class ProgressTimestampsTests(unittest.TestCase):
+    """Время прогресса уходит в браузер с явной зоной UTC.
+
+    Регрессия: строка без зоны (``2026-11-26T07:13:04``) разбирается в JS как
+    локальное время. Для Москвы это сдвиг на 3 часа — свежий прогресс выглядел
+    как «нет обновлений 180 мин», а ETA показывался на 3 часа раньше.
+    """
+
+    def test_naive_utc_gets_explicit_offset(self):
+        naive = datetime(2026, 11, 26, 7, 13, 4)
+
+        self.assertEqual(_iso_utc(naive), "2026-11-26T07:13:04+00:00")
+
+    def test_none_stays_none(self):
+        self.assertIsNone(_iso_utc(None))
+
+    def test_updated_at_is_timezone_aware(self):
+        job = FakeJob()
+        job.progress_stage = "parsing"
+        job.progress_done = 29
+        job.progress_total = 673
+        job.progress_updated_at = datetime(2026, 11, 26, 7, 13, 4)
+
+        updated_at = _progress_of(job)["updated_at"]
+
+        self.assertTrue(
+            updated_at.endswith("+00:00"),
+            "без смещения браузер примет UTC за локальное время: %s" % updated_at,
+        )
+        # Тот же момент времени, что и в БД, а не сдвинутый на зону.
+        self.assertEqual(
+            datetime.fromisoformat(updated_at),
+            datetime(2026, 11, 26, 7, 13, 4, tzinfo=timezone.utc),
+        )
+
+    def test_eta_at_counts_from_last_report(self):
+        job = FakeJob()
+        job.progress_stage = "parsing"
+        job.progress_done = 29
+        job.progress_total = 673
+        job.progress_updated_at = datetime(2026, 11, 26, 7, 13, 4)
+        job.progress_eta_seconds = 360
+
+        eta_at = _progress_of(job)["eta_at"]
+
+        self.assertEqual(eta_at, "2026-11-26T07:19:04+00:00")
+
+    def test_percent_and_eta_absent_without_progress(self):
+        job = FakeJob()
+
+        progress = _progress_of(job)
+
+        self.assertIsNone(progress["percent"])
+        self.assertIsNone(progress["updated_at"])
+        self.assertIsNone(progress["eta_at"])
 
 
 if __name__ == "__main__":

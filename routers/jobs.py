@@ -2,7 +2,7 @@ import io
 import json
 import logging
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import httpx
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Request, UploadFile
@@ -78,6 +78,25 @@ def _friendly_error(text: str) -> str:
     return stripped
 
 
+def _iso_utc(value: datetime | None) -> str | None:
+    """Время из БД в ISO-строке с явной зоной UTC.
+
+    В БД все даты — naive UTC (``datetime.utcnow``). Если отдать такую строку
+    браузеру как есть (``2026-11-26T07:13:04``), то ``new Date(...)`` по
+    стандарту разберёт её как ЛОКАЛЬНОЕ время. Для Москвы это сдвиг на 3 часа:
+    только что обновлённый прогресс выглядел как «нет обновлений 180 мин»,
+    а ETA показывался на 3 часа раньше.
+
+    Поэтому добавляем ``+00:00``: тогда браузер сам переведёт время в зону
+    пользователя, и разница между сервером и клиентом исчезнет.
+    """
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.isoformat()
+
+
 def _progress_of(job: ProcessingJob) -> dict:
     """Прогресс задачи в виде, удобном для UI.
 
@@ -97,9 +116,9 @@ def _progress_of(job: ProcessingJob) -> dict:
     eta_seconds = job.progress_eta_seconds
     eta_at = None
     if eta_seconds and job.progress_updated_at:
-        eta_at = (
+        eta_at = _iso_utc(
             job.progress_updated_at + timedelta(seconds=int(eta_seconds))
-        ).isoformat()
+        )
 
     return {
         "stage": job.progress_stage,
@@ -109,9 +128,7 @@ def _progress_of(job: ProcessingJob) -> dict:
         "message": job.progress_message,
         "eta_seconds": eta_seconds,
         "eta_at": eta_at,
-        "updated_at": (
-            job.progress_updated_at.isoformat() if job.progress_updated_at else None
-        ),
+        "updated_at": _iso_utc(job.progress_updated_at),
     }
 
 
@@ -573,8 +590,8 @@ async def get_job(
         "error": job.error,
         "chat_id": job.chat_id,
         "progress": _progress_of(job),
-        "created_at": job.created_at.isoformat(),
-        "finished_at": job.finished_at.isoformat() if job.finished_at else None,
+        "created_at": _iso_utc(job.created_at),
+        "finished_at": _iso_utc(job.finished_at),
     }
 
 
@@ -601,8 +618,8 @@ async def list_jobs(
             "user_id": j.user_id,
             "status": j.status,
             "progress": _progress_of(j),
-            "created_at": j.created_at.isoformat(),
-            "finished_at": j.finished_at.isoformat() if j.finished_at else None,
+            "created_at": _iso_utc(j.created_at),
+            "finished_at": _iso_utc(j.finished_at),
         }
         for j in jobs
     ]

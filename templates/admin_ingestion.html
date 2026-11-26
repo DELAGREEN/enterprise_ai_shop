@@ -58,12 +58,24 @@ async function refreshJobs() {
       <td>${j.user_id}</td>
       <td>${statusBadge(j.status)}</td>
       <td>${progressCell(j)}</td>
-      <td>${j.created_at}</td>
-      <td>${j.finished_at || '—'}</td>
+      <td>${fmtTime(j.created_at)}</td>
+      <td>${j.finished_at ? fmtTime(j.finished_at) : '—'}</td>
     </tr>`;
   }
   html += '</tbody></table>';
   document.getElementById('jobsTable').innerHTML = html;
+}
+
+// Время приходит с сервера в UTC с явным смещением (+00:00), браузер сам
+// переводит его в зону пользователя. Формат — как у фильтра localtime
+// в остальных шаблонах: 26.11.2026 10:13.
+function fmtTime(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso;
+  const p = (n) => String(n).padStart(2, '0');
+  return `${p(d.getDate())}.${p(d.getMonth() + 1)}.${d.getFullYear()} ` +
+         `${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
 // Стадии идут в том порядке, в котором их проходит документ.
