@@ -111,7 +111,15 @@ services:
       - LANGFLOW_WORKERS=3  # any value > 1
       - LANGFLOW_JOB_QUEUE_TYPE=redis
       - LANGFLOW_REDIS_QUEUE_URL=redis://langflow-redis:6379/1
-      - LANGFLOW_WORKER_TIMEOUT=600
+      # 3600, а не 600: документ на 673 страницы разбирается ~11 минут
+      # (замерено ~1 с/страницу), и в 10 минут он не укладывается.
+      - LANGFLOW_WORKER_TIMEOUT=3600
+      # ВАЖНО: это отдельный лимит, не связанный с WORKER_TIMEOUT.
+      # «Workflow run ... exceeded 300s execution ceiling» приходит именно
+      # отсюда (lfx/services/settings/groups/runtime.py, дефолт 300 с).
+      # Без него Langflow убивает фоновый запуск через 5 минут, парсер
+      # не успевает дойти до ингеста, и в Qdrant ничего не попадает.
+      - LANGFLOW_WORKFLOW_EXECUTION_TIMEOUT=3600
       # Кэш моделей fastembed (Qdrant/bm25) — подкладывается локально,
       # чтобы система поднималась без интернета
       - FASTEMBED_CACHE_PATH=/app/fastembed_cache
@@ -128,8 +136,8 @@ services:
     depends_on:
       langflow-db:
         condition: service_healthy
-      pgvector:
-        condition: service_healthy
+      #pgvector:
+      #  condition: service_healthy
       redis:
         condition: service_healthy
       langflow-redis:
@@ -158,6 +166,11 @@ services:
     dns_search:
       - company.local                           # опционально, чтобы писать просто "main" вместо "main.company.local"
     extra_hosts: 
+    # host-gateway нужен, чтобы из контейнера был доступен хост по имени
+    # host.docker.internal. На этом имени держится приёмник прогресса
+    # (PROGRESS_BASE_URL в .env приложения): без этой строки имя не
+    # резолвится, и компоненты Langflow не смогут отправить прогресс.
+    # Проверка: docker exec langflow getent hosts host.docker.internal
     # http://host.docker.internal:11434                             
     - "host.docker.internal:host-gateway"       # ← магическая строка
   

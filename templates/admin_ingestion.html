@@ -50,19 +50,81 @@ async function refreshJobs() {
   if (!res.ok) return;
   const jobs = await res.json();
   if (!Array.isArray(jobs)) return;
-  let html = '<table><thead><tr><th>ID</th><th>Flow</th><th>Пользователь</th><th>Статус</th><th>Создана</th><th>Завершена</th></tr></thead><tbody>';
+  let html = '<table><thead><tr><th>ID</th><th>Flow</th><th>Пользователь</th><th>Статус</th><th>Прогресс</th><th>Создана</th><th>Завершена</th></tr></thead><tbody>';
   for (const j of jobs) {
     html += `<tr>
       <td><code>${j.job_id.slice(0,8)}…</code></td>
       <td><code>${j.flow_id.slice(0,8)}…</code></td>
       <td>${j.user_id}</td>
       <td>${statusBadge(j.status)}</td>
+      <td>${progressCell(j)}</td>
       <td>${j.created_at}</td>
       <td>${j.finished_at || '—'}</td>
     </tr>`;
   }
   html += '</tbody></table>';
   document.getElementById('jobsTable').innerHTML = html;
+}
+
+// Стадии идут в том порядке, в котором их проходит документ.
+const STAGE_LABELS = {
+  parsing: 'разбор PDF',
+  chunking: 'нарезка',
+  embedding: 'эмбеддинги',
+  upserting: 'запись в Qdrant',
+  done: 'готово',
+};
+
+// «осталось 4 мин (≈ 14:32)». Время окончания считает сервер — оно не
+// устаревает между опросами, в отличие от «осталось N секунд».
+function etaText(p) {
+  if (!p.eta_seconds || p.eta_seconds <= 0) return '';
+  let left;
+  if (p.eta_seconds < 60) {
+    left = 'меньше минуты';
+  } else if (p.eta_seconds < 3600) {
+    left = Math.round(p.eta_seconds / 60) + ' мин';
+  } else {
+    const h = Math.floor(p.eta_seconds / 3600);
+    const m = Math.round((p.eta_seconds % 3600) / 60);
+    left = h + ' ч' + (m ? ' ' + m + ' мин' : '');
+  }
+  let at = '';
+  if (p.eta_at) {
+    const d = new Date(p.eta_at);
+    at = ' (≈ ' + String(d.getHours()).padStart(2, '0') + ':' +
+         String(d.getMinutes()).padStart(2, '0') + ')';
+  }
+  return `осталось ~${left}${at}`;
+}
+
+function progressCell(job) {
+  const p = job.progress || {};
+  if (!p.stage && p.percent == null && !p.message) return '—';
+
+  // Пока задача не завершилась, а прогресс не обновлялся давно — это
+  // признак зависшего воркера, а не «всё хорошо».
+  let stale = '';
+  if ((job.status === 'running' || job.status === 'queued') && p.updated_at) {
+    const ageSec = (Date.now() - new Date(p.updated_at).getTime()) / 1000;
+    if (ageSec > 120) {
+      stale = `<div class="muted" style="font-size:11px;color:#b45309;">нет обновлений ${Math.round(ageSec / 60)} мин</div>`;
+    }
+  }
+
+  const label = STAGE_LABELS[p.stage] || p.stage || '';
+  if (p.percent == null) {
+    return `<span class="muted">${label}</span>${stale}`;
+  }
+
+  const bar = `<div style="background:#e5e7eb;border-radius:999px;height:6px;width:120px;overflow:hidden;">
+      <div style="background:#2563eb;height:6px;width:${p.percent}%;"></div>
+    </div>`;
+  const eta = (job.status === 'running' && p.stage !== 'done') ? etaText(p) : '';
+  return `${bar}
+    <div style="font-size:11px;" class="muted">${label}: ${p.done} / ${p.total} (${p.percent}%)</div>
+    ${eta ? `<div style="font-size:11px;" class="muted">${eta}</div>` : ''}
+    ${stale}`;
 }
 
 function statusBadge(s) {

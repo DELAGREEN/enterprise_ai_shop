@@ -25,6 +25,14 @@ class FakeJob:
         self.input_text = None
         self.input_files = None
         self.history_saved = False
+        # Поля прогресса: apply_job_status дополняет ошибку стадией, на
+        # которой задача была прервана.
+        self.progress_stage = None
+        self.progress_done = None
+        self.progress_total = None
+        self.progress_message = None
+        self.progress_eta_seconds = None
+        self.progress_updated_at = None
 
 
 class ApplyJobStatusTests(unittest.TestCase):
@@ -64,7 +72,11 @@ class ApplyJobStatusTests(unittest.TestCase):
         })
 
         self.assertEqual(job.status, "timeout")
-        self.assertEqual(job.error, "Workflow execution timed out.")
+        # Сообщение теперь не голое: подсказываем, что файл надо гнать
+        # пакетами (page_from/page_to) или поднять LANGFLOW_WORKER_TIMEOUT.
+        self.assertIn("LANGFLOW_WORKER_TIMEOUT", job.error)
+        self.assertIn("page_from/page_to", job.error)
+        self.assertIn("Workflow execution timed out.", job.error)
 
     def test_bare_timeout_message_gets_hint(self):
         job = FakeJob()
@@ -207,6 +219,60 @@ class BuildInputValueTests(unittest.TestCase):
     def test_nothing_to_send(self):
         self.assertEqual(build_input_value(None, []), "")
         self.assertEqual(build_input_value("   ", []), "")
+
+
+class InterruptedAtStageTests(unittest.TestCase):
+    """Задача упала после того, как компонент уже отчитался о разборе.
+
+    Типичный случай: парсинг прошёл, а запуск убило на эмбеддингах. Голое
+    «Workflow execution timed out» не сообщает главного — что документ в
+    Qdrant НЕ записан, и загрузку надо повторить.
+    """
+
+    def test_error_mentions_stage_and_missing_qdrant(self):
+        job = FakeJob()
+        job.progress_stage = "embedding"
+        job.progress_done = 120
+        job.progress_total = 480
+
+        apply_job_status(job, {
+            "status": "timeout",
+            "errors": [{"error": "Workflow execution timed out."}],
+        })
+
+        self.assertEqual(job.status, "timeout")
+        self.assertIn("embedding", job.error)
+        self.assertIn("120", job.error)
+        self.assertIn("480", job.error)
+        self.assertIn("Qdrant", job.error)
+
+    def test_completed_stage_does_not_add_noise(self):
+        job = FakeJob()
+        job.progress_stage = "done"
+        job.progress_done = 480
+        job.progress_total = 480
+
+        apply_job_status(job, {
+            "status": "failed",
+            "errors": [{"error": "upsert rejected"}],
+        })
+
+        self.assertEqual(job.status, "failed")
+        self.assertNotIn("прервана на стадии", job.error)
+        self.assertIn("upsert rejected", job.error)
+
+    def test_note_is_not_duplicated(self):
+        job = FakeJob()
+        job.progress_stage = "parsing"
+        job.progress_done = 10
+        job.progress_total = 673
+
+        status = {"status": "timeout", "errors": [{"error": "timed out"}]}
+        apply_job_status(job, status)
+        first = job.error
+        apply_job_status(job, status)
+
+        self.assertEqual(job.error, first)
 
 
 if __name__ == "__main__":

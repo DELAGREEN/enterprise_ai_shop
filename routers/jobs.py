@@ -2,13 +2,15 @@ import io
 import json
 import logging
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import httpx
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import config
 from database import get_db
 import uploads
 from langflow_client import LangflowClient, extract_error_text, extract_output_text
@@ -18,30 +20,99 @@ from session import get_current_user
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api")
 
+# Стадии обработки документа. Порядок важен: по нему UI рисует шаги,
+# а поллер понимает, что задача действительно движется вперёд.
+PROGRESS_STAGES = ("parsing", "chunking", "embedding", "upserting", "done")
+_FINAL_JOB_STATUSES = ("completed", "failed", "timeout")
+
 EMPTY_RESULT_HINT = (
     "Flow завершился без результата. Проверьте, что входной компонент "
     "(Chat Input) подключён к цепочке или удалён из flow."
 )
 
 # Голые сообщения httpx/qdrant-client мало о чём говорят пользователю.
-_ERROR_HINTS = {
-    "timed out": (
+# Проверяем по подстроке: Langflow отдаёт разные обёртки вокруг одного и
+# того же таймаута («Workflow execution timed out», «Operation timed out»).
+_ERROR_HINTS = (
+    (
+        "workflow execution timed out",
+        "Langflow прервал запуск по потолку времени. Это ДВЕ разные "
+        "переменные: LANGFLOW_WORKFLOW_EXECUTION_TIMEOUT (по умолчанию "
+        "всего 300 с — именно она даёт «execution ceiling») и "
+        "LANGFLOW_WORKER_TIMEOUT. Поднимите обе в docker-compose и "
+        "перезапустите langflow. Для очень больших PDF дополнительно "
+        "гнать пакетами через page_from/page_to (по 60–100 страниц).",
+    ),
+    (
+        "execution ceiling",
+        "Сработал потолок времени Langflow (LANGFLOW_WORKFLOW_EXECUTION_TIMEOUT, "
+        "по умолчанию 300 с). Поднимите его в docker-compose и перезапустите "
+        "langflow; большие документы дополнительно гнать пакетами "
+        "page_from/page_to.",
+    ),
+    (
+        "job timed out",
+        "Задача не успела за отведённое время. Разбейте документ на части "
+        "через page_from/page_to или увеличьте LANGFLOW_WORKER_TIMEOUT и "
+        "LANGFLOW_WORKFLOW_EXECUTION_TIMEOUT.",
+    ),
+    (
+        "timed out",
         "Таймаут при обращении к внешнему сервису (Qdrant или модель "
-        "эмбеддингов). Увеличьте timeout в компоненте загрузки."
+        "эмбеддингов). Увеличьте timeout в компоненте загрузки.",
     ),
-    "all connection attempts failed": (
-        "Не удалось подключиться к Langflow — сервис недоступен."
+    (
+        "all connection attempts failed",
+        "Не удалось подключиться к Langflow — сервис недоступен.",
     ),
-}
+)
 
 
 def _friendly_error(text: str) -> str:
     """Подставляет понятное описание вместо технического «timed out»."""
     stripped = (text or "").strip()
-    hint = _ERROR_HINTS.get(stripped.lower())
-    if hint:
-        return f"{hint} (детали: {stripped})"
+    lowered = stripped.lower()
+    for needle, hint in _ERROR_HINTS:
+        if needle in lowered:
+            return f"{hint} (детали: {stripped})"
     return stripped
+
+
+def _progress_of(job: ProcessingJob) -> dict:
+    """Прогресс задачи в виде, удобном для UI.
+
+    ``percent`` считается здесь, а не в браузере: у таблицы и у карточки
+    задачи одна и та же логика, и не хочется дублировать округление.
+
+    ``eta_at`` — абсолютное время окончания, а не «осталось N секунд».
+    Секунды устаревают между опросами (страница обновляется раз в 10 с), а
+    время окончания остаётся верным, даже если вкладка провисела минуту.
+    """
+    done = job.progress_done
+    total = job.progress_total
+    percent = None
+    if done is not None and total:
+        percent = max(0, min(100, int(done * 100 / total)))
+
+    eta_seconds = job.progress_eta_seconds
+    eta_at = None
+    if eta_seconds and job.progress_updated_at:
+        eta_at = (
+            job.progress_updated_at + timedelta(seconds=int(eta_seconds))
+        ).isoformat()
+
+    return {
+        "stage": job.progress_stage,
+        "done": done,
+        "total": total,
+        "percent": percent,
+        "message": job.progress_message,
+        "eta_seconds": eta_seconds,
+        "eta_at": eta_at,
+        "updated_at": (
+            job.progress_updated_at.isoformat() if job.progress_updated_at else None
+        ),
+    }
 
 
 def apply_job_status(job: ProcessingJob, lf: dict) -> bool:
@@ -82,6 +153,23 @@ def apply_job_status(job: ProcessingJob, lf: dict) -> bool:
     if job.status in ("completed", "failed", "timeout") and job.finished_at is None:
         job.finished_at = datetime.utcnow()
         changed = True
+
+    # Задачу добили после того, как компонент уже отчитался о разборе:
+    # значит разбор прошёл, а упало на эмбеддингах/записи. Голая ошибка
+    # «timed out» тут не объясняет, что документ не попал в Qdrant.
+    if (
+        job.status in ("failed", "timeout")
+        and job.progress_stage
+        and job.progress_stage not in ("done",)
+    ):
+        note = (
+            f"Обработка прервана на стадии «{job.progress_stage}"
+            f"» (успело: {job.progress_done or 0} из {job.progress_total or '?'}). "
+            "Данные в Qdrant не записаны."
+        )
+        if note not in (job.error or ""):
+            job.error = f"{job.error}\n\n{note}" if job.error else note
+            changed = True
 
     return changed
 
@@ -294,11 +382,34 @@ async def upload_and_run(
     if uploaded:
         inputs["file_paths"] = [up["path"] for up in uploaded]
 
-    # 3. Запускаем в фоне
-    resp = await client.run_flow_background(flow_id, inputs, session_id=session_id)
+    # 3. Задача создаётся ДО запуска flow: компонент Langflow должен знать
+    # job_id, чтобы присылать прогресс. Раньше job создавался после запуска,
+    # и адресовать прогресс было некуда — отсюда «висит и непонятно, живой ли».
+    job = await _create_job(
+        db, user["username"], flow_id, "ingestion",
+        input_files=uploaded,
+        input_text=input_value,
+        chat_id=chat.id if chat else None,
+    )
+    await db.commit()
+
+    progress = {
+        "job_id": job.id,
+        "url": f"{config.PROGRESS_BASE_URL}/api/jobs/{job.id}/progress",
+        "token": config.PROGRESS_TOKEN,
+    }
+
+    # 4. Запускаем в фоне
+    resp = await client.run_flow_background(
+        flow_id, inputs, session_id=session_id, progress=progress
+    )
 
     if resp.get("error"):
         logger.error("Langflow error: %s", resp.get("detail"))
+        job.status = "failed"
+        job.error = str(resp.get("detail") or resp.get("message") or "Ошибка запуска flow")
+        job.finished_at = datetime.utcnow()
+        await db.commit()
         raise HTTPException(
             status_code=resp.get("status_code") or 502,
             detail=resp.get("detail") or resp.get("message"),
@@ -307,15 +418,12 @@ async def upload_and_run(
     langflow_job_id = resp.get("job_id")
     if not langflow_job_id:
         logger.error("Langflow не вернул job_id: %s", resp)
+        job.status = "failed"
+        job.error = "Langflow не вернул job_id"
+        job.finished_at = datetime.utcnow()
+        await db.commit()
         raise HTTPException(status_code=502, detail="Langflow не вернул job_id")
 
-    # 4. Сохраняем задачу в БД и сразу — сообщение пользователя в историю чата
-    job = await _create_job(
-        db, user["username"], flow_id, "ingestion",
-        input_files=uploaded,
-        input_text=input_value,
-        chat_id=chat.id if chat else None,
-    )
     job.langflow_job_id = langflow_job_id
 
     if chat is not None:
@@ -342,7 +450,84 @@ async def upload_and_run(
         "status": "queued",
         "files": uploaded,
         "chat_title": chat.title if chat else None,
+        "progress_url": progress["url"],
     }
+
+
+@router.post("/jobs/{job_id}/progress")
+async def report_progress(
+    job_id: str,
+    request: Request,
+    payload: dict = Body(default={}),
+    db: AsyncSession = Depends(get_db),
+):
+    """Приём прогресса от компонента Langflow.
+
+    Авторизация — по общему токену, а не по сессии: у Langflow нет cookie
+    пользователя. Токен передаётся заголовком ``X-Progress-Token`` или полем
+    ``token`` в теле (заголовок предпочтительнее — не оседает в логах тела).
+
+    Вызывается часто (раз в несколько секунд), поэтому отвечает 204 и не
+    трогает ничего, кроме полей прогресса.
+    """
+    token = (request.headers.get("x-progress-token") or "").strip()
+    if not token:
+        token = str(payload.get("token") or "").strip()
+    if not config.PROGRESS_TOKEN or token != config.PROGRESS_TOKEN:
+        raise HTTPException(401, "Неверный токен прогресса")
+
+    job = await db.get(ProcessingJob, job_id)
+    if job is None:
+        raise HTTPException(404, "Job not found")
+
+    # Поздний прогресс от зависшего воркера: задачу уже закрыли по таймауту
+    # или по ответу Langflow — перезаписывать статус нельзя.
+    if job.status in _FINAL_JOB_STATUSES:
+        return Response(status_code=204)
+
+    stage = str(payload.get("stage") or "").strip()
+    if stage and stage not in PROGRESS_STAGES:
+        raise HTTPException(400, f"Неизвестная стадия: {stage}")
+
+    def _as_int(value):
+        if value is None or value == "":
+            return None
+        try:
+            return max(0, int(value))
+        except (TypeError, ValueError):
+            return None
+
+    done = _as_int(payload.get("done"))
+    total = _as_int(payload.get("total"))
+    eta_seconds = _as_int(payload.get("eta_seconds"))
+    message = payload.get("message")
+    message = str(message).strip()[:500] if message else None
+
+    if stage:
+        job.progress_stage = stage
+    if done is not None:
+        job.progress_done = done
+    if total is not None:
+        job.progress_total = total
+    if message is not None:
+        job.progress_message = message
+
+    # На финальной стадии оценка «сколько осталось» теряет смысл: задача
+    # уже закончилась, и «осталось 2 минуты» в UI было бы враньём.
+    if stage == "done" or eta_seconds == 0:
+        job.progress_eta_seconds = 0
+    elif eta_seconds is not None:
+        job.progress_eta_seconds = min(eta_seconds, 24 * 3600)
+
+    job.progress_updated_at = datetime.utcnow()
+
+    # Компонент уже работает — значит Langflow точно запустил flow, и
+    # задача больше не «в очереди».
+    if job.status == "queued":
+        job.status = "running"
+
+    await db.commit()
+    return Response(status_code=204)
 
 
 @router.get("/jobs/{job_id}")
@@ -387,6 +572,7 @@ async def get_job(
         "result": job.result,
         "error": job.error,
         "chat_id": job.chat_id,
+        "progress": _progress_of(job),
         "created_at": job.created_at.isoformat(),
         "finished_at": job.finished_at.isoformat() if job.finished_at else None,
     }
@@ -414,6 +600,7 @@ async def list_jobs(
             "flow_id": j.flow_id,
             "user_id": j.user_id,
             "status": j.status,
+            "progress": _progress_of(j),
             "created_at": j.created_at.isoformat(),
             "finished_at": j.finished_at.isoformat() if j.finished_at else None,
         }

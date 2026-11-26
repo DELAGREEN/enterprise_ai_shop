@@ -247,6 +247,17 @@ class ProcessingJob(Base):
     input_text = Column(Text, nullable=True)            # для чата
     result = Column(Text, nullable=True)                # ответ / результат
     error = Column(Text, nullable=True)
+    # Прогресс обработки: компонент Langflow присылает его по HTTP, пока
+    # идёт разбор и загрузка. Без этого задача висит в "running" и
+    # непонятно, жива она или нет.
+    progress_stage = Column(String, nullable=True)      # parsing | chunking | embedding | upserting | done
+    progress_done = Column(Integer, nullable=True)
+    progress_total = Column(Integer, nullable=True)
+    progress_message = Column(Text, nullable=True)
+    # Оценка «сколько осталось». Храним в секундах и пересчитываем в
+    # абсолютное время при отдаче: так цифра не устаревает между опросами.
+    progress_eta_seconds = Column(Integer, nullable=True)
+    progress_updated_at = Column(DateTime, nullable=True)
     # Результат уже перенесён в историю чата (защита от повторной записи)
     history_saved = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)

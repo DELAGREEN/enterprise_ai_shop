@@ -95,6 +95,40 @@ def build_file_tweaks(flow: dict, file_paths: list[str]) -> dict:
     return tweaks
 
 
+def build_progress_tweaks(
+    flow: dict, job_id: str, progress_url: str, token: str
+) -> dict:
+    """Прокидывает адрес приёмника прогресса в компоненты flow.
+
+    Langflow не отдаёт прогресс выполнения в job API, поэтому компонент
+    сам стучится в приложение. Чтобы он знал куда и про какую задачу —
+    передаём ``job_id``, ``progress_url`` и ``progress_token`` через tweaks.
+
+    Подставляем только в те узлы, где такие поля реально есть: если flow
+    собран со старой версией парсера, лишних tweaks не появится и запуск
+    не сломается.
+    """
+    values = {
+        "job_id": job_id,
+        "progress_url": progress_url,
+        "progress_token": token,
+    }
+    nodes = ((flow or {}).get("data") or {}).get("nodes") or []
+    tweaks: dict[str, dict] = {}
+
+    for node in nodes:
+        node_id = node.get("id")
+        template = ((node.get("data") or {}).get("node") or {}).get("template") or {}
+        if not node_id or not isinstance(template, dict):
+            continue
+
+        matched = {name: value for name, value in values.items() if name in template}
+        if matched:
+            tweaks[node_id] = matched
+
+    return tweaks
+
+
 def _response_detail(response: httpx.Response) -> Any:
     """Достаёт тело ошибки Langflow для логов и ответа API."""
     try:
@@ -398,13 +432,21 @@ class LangflowClient:
         return data
 
     async def run_flow_background(
-        self, flow_id: str, inputs: dict, session_id: str | None = None
+        self,
+        flow_id: str,
+        inputs: dict,
+        session_id: str | None = None,
+        progress: dict | None = None,
     ) -> dict:
         """Ставит flow в очередь Langflow (``mode=background``).
 
         ВАЖНО: ``/api/v2/workflows`` принимает ``WorkflowRunRequest`` с
         ``additionalProperties=false``. ``output_type``/``input_type`` —
         параметры старого ``/api/v1/run``; в v2 они запрещены (HTTP 422).
+
+        ``progress`` — ``{"job_id", "url", "token"}``: адрес приёмника
+        прогресса. Прокидывается в компоненты через tweaks, чтобы парсер
+        мог отчитываться о разборе страниц.
         """
         file_paths = [p for p in inputs.get("file_paths", []) if p]
         if not file_paths and inputs.get("file_path"):
@@ -416,20 +458,24 @@ class LangflowClient:
             "input_value": input_value,
             "mode": "background",
         }
+
+        # Определение flow нужно и для файловых tweaks, и для прогресса,
+        # поэтому запрашиваем один раз.
+        flow: dict | None = None
+        tweaks: dict = {}
+        if file_paths or progress:
+            try:
+                flow = await self.get_flow(flow_id)
+            except httpx.HTTPError as e:
+                logger.warning("Не удалось получить flow %s для tweaks: %s", flow_id, e)
+
         if file_paths:
             # ``files`` Langflow кладёт в Chat Input (если он есть во flow).
             payload["files"] = file_paths
             # Read File берёт файлы из своего поля ``path`` → нужны tweaks.
-            flow: dict | None = None
-            try:
-                flow = await self.get_flow(flow_id)
-                tweaks = build_file_tweaks(flow, file_paths)
-            except httpx.HTTPError as e:
-                logger.warning("Не удалось получить flow %s для tweaks: %s", flow_id, e)
-                tweaks = {}
-            if tweaks:
-                payload["tweaks"] = tweaks
-                logger.info("File tweaks: %s", json.dumps(tweaks, default=str))
+            file_tweaks = build_file_tweaks(flow, file_paths) if flow else {}
+            if file_tweaks:
+                tweaks.update(file_tweaks)
             else:
                 logger.warning(
                     "Во flow %s не найден файловый компонент (FileInput) — "
@@ -437,6 +483,26 @@ class LangflowClient:
                     flow_id,
                 )
 
+        if progress and flow:
+            progress_tweaks = build_progress_tweaks(
+                flow, progress["job_id"], progress["url"], progress["token"]
+            )
+            if progress_tweaks:
+                for node_id, values in progress_tweaks.items():
+                    tweaks.setdefault(node_id, {}).update(values)
+                logger.info(
+                    "Прогресс будет отправляться на %s (%d компонент(ов))",
+                    progress["url"],
+                    len(progress_tweaks),
+                )
+            else:
+                logger.warning(
+                    "Во flow %s нет полей job_id/progress_url — прогресс "
+                    "не будет отправляться. Обновите компонент парсера.",
+                    flow_id,
+                )
+
+        if file_paths:
             disconnected = find_disconnected_inputs(flow) if flow else []
             if disconnected:
                 logger.warning(
@@ -445,6 +511,11 @@ class LangflowClient:
                     flow_id,
                     ", ".join(disconnected),
                 )
+
+        if tweaks:
+            payload["tweaks"] = tweaks
+            logger.info("Tweaks: %s", json.dumps(tweaks, default=str))
+
         if session_id:
             payload["session_id"] = session_id
 

@@ -75,6 +75,12 @@ MIGRATIONS = [
     ")",
     "ALTER TABLE processing_jobs ADD COLUMN IF NOT EXISTS chat_id VARCHAR",
     "ALTER TABLE processing_jobs ADD COLUMN IF NOT EXISTS history_saved BOOLEAN NOT NULL DEFAULT FALSE",
+    "ALTER TABLE processing_jobs ADD COLUMN IF NOT EXISTS progress_stage VARCHAR",
+    "ALTER TABLE processing_jobs ADD COLUMN IF NOT EXISTS progress_done INTEGER",
+    "ALTER TABLE processing_jobs ADD COLUMN IF NOT EXISTS progress_total INTEGER",
+    "ALTER TABLE processing_jobs ADD COLUMN IF NOT EXISTS progress_message TEXT",
+    "ALTER TABLE processing_jobs ADD COLUMN IF NOT EXISTS progress_eta_seconds INTEGER",
+    "ALTER TABLE processing_jobs ADD COLUMN IF NOT EXISTS progress_updated_at TIMESTAMP",
     "ALTER TABLE flow_publications ADD COLUMN IF NOT EXISTS supports_files BOOLEAN NOT NULL DEFAULT FALSE",
     "ALTER TABLE chats ADD COLUMN IF NOT EXISTS show_thinking BOOLEAN NOT NULL DEFAULT FALSE",
     "ALTER TABLE chats ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP",
@@ -289,7 +295,10 @@ async def auth_middleware(request: Request, call_next):
         or path.startswith("/embed/")
         or path.startswith("/branding/")
         or path.startswith("/icons/")
-        or path.startswith("/api/v1/")):
+        or path.startswith("/api/v1/")
+        # Прогресс присылает компонент Langflow: у него нет cookie
+        # пользователя, он авторизуется своим токеном в самом эндпоинте.
+        or (path.startswith("/api/jobs/") and path.endswith("/progress"))):
         
         return await call_next(request)
 

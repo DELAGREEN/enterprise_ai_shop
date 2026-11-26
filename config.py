@@ -69,6 +69,30 @@ LDAP_ADMIN_GROUP = os.getenv("LDAP_ADMIN_GROUP", "")
 # --- Session ---
 SECRET_KEY = os.getenv("SECRET_KEY", "change-me-super-secret")
 
+# --- Прогресс ингеста ---
+# Токен, которым компонент Langflow подтверждает, что это он присылает
+# прогресс. Отдельная переменная, чтобы не светить SECRET_KEY в flow.
+PROGRESS_TOKEN = os.getenv("PROGRESS_TOKEN", "") or SECRET_KEY
+
+# Базовый адрес приложения, доступный ИЗ КОНТЕЙНЕРА Langflow. localhost там
+# указывает на сам Langflow, поэтому по умолчанию — host.docker.internal.
+#
+# ТРЕБОВАНИЕ: у сервиса langflow в docker-compose должен быть
+#   extra_hosts:
+#     - "host.docker.internal:host-gateway"
+# Без этой строки имя не резолвится и прогресс молча не доходит.
+# Проверка: docker exec langflow getent hosts host.docker.internal
+#
+# Если приложение окажется в ОДНОЙ docker-сети с langflow, адрес можно
+# заменить на http://<имя-сервиса>:<внутренний-порт>, например
+# http://enterprise-ai-shop:5001. Важно: порт должен быть тем, который
+# слушает uvicorn ВНУТРИ сети. Если снаружи виден редирект (302), значит
+# запрос попал не туда — проверьте порт и маршрут через nginx.
+PROGRESS_BASE_URL = (
+    os.getenv("PROGRESS_BASE_URL", "").rstrip("/")
+    or "http://host.docker.internal:5001"
+)
+
 # --- Fallback ---
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")

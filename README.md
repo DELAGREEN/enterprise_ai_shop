@@ -115,6 +115,68 @@ APP_HEADER_TEXT_COLOR=#ffffff
 в `uploads.py`, проверяется и в браузере (атрибут `accept` + подсказка),
 и на сервере (`400` с понятным сообщением).
 
+### Прогресс обработки документов
+
+Пока Langflow разбирает файл, приложение показывает стадию и процент
+(«разбор PDF: 240 / 673», «осталось ~4 мин»). Langflow не отдаёт прогресс
+через job API, поэтому компоненты flow сами шлют его по HTTP:
+
+```
+Langflow (парсер/ингест) ──POST──► /api/jobs/{id}/progress ──► админка
+                X-Progress-Token
+```
+
+Значения `job_id`, `progress_url`, `progress_token` **не нужно вписывать
+в компоненты вручную** — приложение подставляет их через tweaks при каждом
+запуске из админки. В Langflow Playground эти поля останутся пустыми, и
+прогресса просто не будет (это нормально).
+
+#### Адрес приложения: `PROGRESS_BASE_URL`
+
+```env
+PROGRESS_TOKEN=<общий секрет; пусто — берётся SECRET_KEY>
+PROGRESS_BASE_URL=http://host.docker.internal:5001
+```
+
+`localhost` внутри контейнера Langflow указывает на сам Langflow, поэтому
+адрес приложения задаётся именем хоста.
+
+**`host.docker.internal` работает только при наличии строки в compose**
+у сервиса `langflow`:
+
+```yaml
+extra_hosts:
+  - "host.docker.internal:host-gateway"
+```
+
+Проверка:
+
+```bash
+docker exec langflow getent hosts host.docker.internal   # должен вернуть IP
+docker exec langflow curl -s -o /dev/null -w '%{http_code}\n' \
+  -X POST http://host.docker.internal:5001/api/jobs/probe/progress \
+  -H "X-Progress-Token: $PROGRESS_TOKEN" -d '{}'
+# 404 = эндпоинт есть (job не найден); 401 = не тот адрес или старый образ
+```
+
+**Если приложение окажется в одной docker-сети с Langflow**, адрес можно
+заменить на имя сервиса:
+
+```env
+PROGRESS_BASE_URL=http://enterprise-ai-shop:5001
+```
+
+Но порт должен быть тем, который слушает uvicorn **внутри** сети, и образ
+должен быть пересобран с актуальным кодом. Проверка на этой машине:
+
+```
+host.docker.internal:5001  -> 404  (эндпоинт прогресса есть)
+enterprise-ai-shop:5001    -> 401  (контейнер со старым образом)
+```
+
+То есть имя резолвится, но в контейнере старая версия без
+эндпоинта — переключение на него без пересборки сломает прогресс.
+
 ### Иконки агентов
 
 Иконка агента — необязательная. По умолчанию её нет, карточка показывается
