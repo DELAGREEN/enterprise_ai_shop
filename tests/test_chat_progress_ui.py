@@ -105,5 +105,36 @@ class StageLabelCoverageTests(unittest.TestCase):
             )
 
 
+class RestoreAfterReloadTests(unittest.TestCase):
+    """Индикатор должен восстанавливаться после F5.
+
+    Раньше пузырь создавался только внутри submitWithFiles, поэтому при
+    перезагрузке страницы задача продолжала идти, а прогресса не было видно.
+    """
+
+    def setUp(self):
+        self.html = render_chat()
+
+    def test_page_asks_for_active_job_on_load(self):
+        self.assertIn("/api/jobs/active", self.html)
+
+    def test_restore_is_called_at_load(self):
+        # Вызов без аргументов — признак того, что он на верхнем уровне
+        # скрипта, а не внутри обработчика отправки.
+        self.assertIn("restoreActiveJob();", self.html)
+
+    def test_restore_is_scoped_to_chat(self):
+        # Без chat_id восстановилась бы чужая задача из другого чата.
+        self.assertIn("encodeURIComponent(chatId)", self.html)
+
+    def test_restore_reuses_the_same_indicator(self):
+        # Общий код отрисовки: иначе индикатор после F5 отличался бы от
+        # индикатора сразу после загрузки файла.
+        self.assertIn("createJobBubble", self.html)
+        self.assertIn("watchJob(", self.html)
+        self.assertEqual(self.html.count("function createJobBubble"), 1)
+        self.assertEqual(self.html.count("function watchJob"), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

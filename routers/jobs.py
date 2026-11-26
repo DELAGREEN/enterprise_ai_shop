@@ -547,6 +547,51 @@ async def report_progress(
     return Response(status_code=204)
 
 
+@router.get("/jobs/active")
+async def active_job(
+    chat_id: str | None = None,
+    flow_id: str | None = None,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Незавершённая задача пользователя — для восстановления индикатора.
+
+    Прогресс рисуется в браузере, поэтому при перезагрузке страницы он
+    пропадал: задача продолжает идти, а показать её нечем. Отдаём активную
+    задачу, чтобы страница могла снова подписаться на опрос.
+
+    ВАЖНО: маршрут объявлен ДО ``/jobs/{job_id}``. Иначе FastAPI примет
+    «active» за идентификатор задачи и вернёт 404.
+    """
+    q = (
+        select(ProcessingJob)
+        .where(ProcessingJob.user_id == user["username"])
+        .where(ProcessingJob.status.in_(("queued", "running")))
+        .order_by(ProcessingJob.created_at.desc())
+        .limit(1)
+    )
+    if chat_id:
+        q = q.where(ProcessingJob.chat_id == chat_id)
+    if flow_id:
+        q = q.where(ProcessingJob.flow_id == flow_id)
+
+    res = await db.execute(q)
+    job = res.scalars().first()
+    if not job:
+        return {"job": None}
+
+    return {
+        "job": {
+            "job_id": job.id,
+            "flow_id": job.flow_id,
+            "chat_id": job.chat_id,
+            "status": job.status,
+            "progress": _progress_of(job),
+            "created_at": _iso_utc(job.created_at),
+        }
+    }
+
+
 @router.get("/jobs/{job_id}")
 async def get_job(
     job_id: str,

@@ -1015,6 +1015,81 @@ function renderJobProgress(statusEl, job) {
     staleEl.textContent = stale;
 }
 
+// Пузырь задачи: спиннер, стадия, полоска, ETA. Вынесено из отправки,
+// чтобы тем же кодом восстанавливать индикатор после перезагрузки страницы.
+// botDiv можно передать готовый — при отправке он уже создан под индикатор
+// «Генерация ответа…», и второй пузырь был бы лишним.
+function createJobBubble(botDiv) {
+    botDiv = botDiv || renderLoadingBotBubble();
+    botDiv.innerHTML = '';
+    const status = document.createElement('div');
+    status.className = 'job-status';
+    status.innerHTML =
+        '<div class="spinner"></div>' +
+        '<div class="job-body">' +
+        '  <span class="job-stage">Файлы обрабатываются…</span>' +
+        '  <div class="job-bar" style="display:none;"><div class="job-bar-fill"></div></div>' +
+        '  <div class="job-meta"></div>' +
+        '  <div class="job-stale"></div>' +
+        '</div>';
+    botDiv.appendChild(status);
+    scrollBottom();
+    return { botDiv, status };
+}
+
+// Опрашивает задачу и перерисовывает индикатор, пока она не завершится.
+function watchJob(jobId, botDiv, status) {
+    const poll = setInterval(async () => {
+        try {
+            const r = await fetch(`/api/jobs/${jobId}`, { credentials: 'include' });
+            if (!r.ok) return;
+            const job = await r.json();
+
+            if (job.status === 'queued' || job.status === 'running') {
+                renderJobProgress(status, job);
+                return;
+            }
+
+            clearInterval(poll);
+            if (job.status === 'completed' && !job.error) {
+                botDiv.innerHTML = '';
+                const content = document.createElement('div');
+                content.className = 'content';
+                content.innerHTML = marked.parse(job.result || 'Файлы обработаны.');
+                botDiv.appendChild(content);
+            } else {
+                renderBotError(botDiv, 'Ошибка обработки: ' + (job.error || job.status), null);
+            }
+            scrollBottom();
+        } catch (e) {
+            // сетевые ошибки — просто ждём следующий тик
+        }
+    }, 3000);
+    return poll;
+}
+
+// После перезагрузки страницы задача продолжает идти, а индикатор
+// создавался только при отправке — прогресс пропадал. Спрашиваем сервер,
+// есть ли незавершённая задача у этого чата, и подписываемся на неё снова.
+async function restoreActiveJob() {
+    if (!chatId) return;  // без чата неясно, чью задачу восстанавливать
+    try {
+        const r = await fetch(
+            `/api/jobs/active?chat_id=${encodeURIComponent(chatId)}`,
+            { credentials: 'include' }
+        );
+        if (!r.ok) return;
+        const data = await r.json();
+        if (!data || !data.job) return;
+
+        const { botDiv, status } = createJobBubble();
+        renderJobProgress(status, data.job);
+        watchJob(data.job.job_id, botDiv, status);
+    } catch (e) {
+        // без восстановления страница просто покажет историю чата
+    }
+}
+
 /* Отправка с файлами */
 async function submitWithFiles(files, text) {
     lastUserMessageText = text;
@@ -1054,51 +1129,16 @@ async function submitWithFiles(files, text) {
         return;
     }
 
-    // Показываем индикатор «в обработке»
-    botDiv.innerHTML = '';
-    const status = document.createElement('div');
-    status.className = 'job-status';
-    status.innerHTML =
-        '<div class="spinner"></div>' +
-        '<div class="job-body">' +
-        '  <span class="job-stage">Файлы обрабатываются…</span>' +
-        '  <div class="job-bar" style="display:none;"><div class="job-bar-fill"></div></div>' +
-        '  <div class="job-meta"></div>' +
-        '  <div class="job-stale"></div>' +
-        '</div>';
-    botDiv.appendChild(status);
-    scrollBottom();
-
-    // Опрос статуса
-    const poll = setInterval(async () => {
-        try {
-            const r = await fetch(`/api/jobs/${jobId}`, { credentials: 'include' });
-            if (!r.ok) return;
-            const job = await r.json();
-
-            if (job.status === 'queued' || job.status === 'running') {
-                renderJobProgress(status, job);
-                return;
-            }
-
-            clearInterval(poll);
-            if (job.status === 'completed' && !job.error) {
-                botDiv.innerHTML = '';
-                const content = document.createElement('div');
-                content.className = 'content';
-                content.innerHTML = marked.parse(job.result || 'Файлы обработаны.');
-                botDiv.appendChild(content);
-            } else {
-                renderBotError(botDiv, 'Ошибка обработки: ' + (job.error || job.status), null);
-            }
-            scrollBottom();
-        } catch (e) {
-            // сетевые ошибки — просто ждём следующий тик
-        }
-    }, 3000);
+    // Показываем индикатор «в обработке» и подписываемся на прогресс
+    const { status } = createJobBubble(botDiv);
+    watchJob(jobId, botDiv, status);
 }
 
 input.focus();
 scrollBottom();
+
+// Задача могла остаться незавершённой с прошлого раза (перезагрузка,
+// закрытая вкладка). Восстанавливаем индикатор, иначе прогресс «теряется».
+restoreActiveJob();
 </script>
 {% endblock %}
