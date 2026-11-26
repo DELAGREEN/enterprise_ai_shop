@@ -444,6 +444,53 @@ class QdrantHybridIngest(Component):
 
     # -------------------------------------------------------------- ингест ---
 
+    def _build_summary(self, upserted: int, skipped: int, total: int, stats: dict) -> str:
+        """Текст итога: отдельно потери, отдельно «заметки».
+
+        Важно не пугать пользователя зря. Усечение и поштучный пересчёт
+        батча — это штатная деградация, данные при этом не теряются: в
+        payload лежит полный текст, sparse (BM25) тоже считается по полному
+        тексту. Поэтому такие случаи идут в «Заметки», а не в «Причины».
+
+        Сырую ошибку модели (`_embed_error`) показываем только когда есть
+        реальные потери — иначе на каждом крупном документе висело бы
+        грозное «Первая ошибка модели: 400 …», хотя пропущено 0.
+        """
+        losses = []
+        if stats["empty"]:
+            losses.append(f"пустой текст: {stats['empty']}")
+        if stats["embed_failed"]:
+            losses.append(f"модель не осилила текст: {stats['embed_failed']}")
+        if stats["sparse_failed"]:
+            losses.append(f"BM25 не осилил текст: {stats['sparse_failed']}")
+        if stats["upsert_failed"]:
+            losses.append(f"Qdrant отверг точку: {stats['upsert_failed']}")
+
+        notes = []
+        if stats["truncated"]:
+            notes.append(
+                f"часть чанков ушла в модель усечённой: {stats['truncated']} "
+                f"(в payload и BM25 — полный текст)"
+            )
+        if stats["batch_failures"]:
+            notes.append(f"батчей пересчитано поштучно: {stats['batch_failures']}")
+
+        summary = (
+            f"Ингест завершён: {upserted} точек в '{self.collection_name}', "
+            f"пропущено {skipped} (всего {total})"
+        )
+        if losses:
+            summary += ". Причины: " + "; ".join(losses)
+            summary += (
+                ". Есть потери — повторите загрузку: идемпотентные point id "
+                "перезапишут уже загруженное и добавят недостающее"
+            )
+            if getattr(self, "_embed_error", None):
+                summary += f". Первая ошибка модели: {self._embed_error}"
+        elif notes:
+            summary += ". Заметки: " + "; ".join(notes)
+        return summary
+
     def ingest(self) -> Data:
         from qdrant_client import QdrantClient, models
 
@@ -579,31 +626,7 @@ class QdrantHybridIngest(Component):
         )
 
         # Итог должен объяснять пропуски, а не просто показывать число.
-        reasons = []
-        if stats["empty"]:
-            reasons.append(f"пустой текст: {stats['empty']}")
-        if stats["embed_failed"]:
-            reasons.append(f"модель не осилила текст: {stats['embed_failed']}")
-        if stats["sparse_failed"]:
-            reasons.append(f"BM25 не осилил текст: {stats['sparse_failed']}")
-        if stats["upsert_failed"]:
-            reasons.append(f"Qdrant отверг точку: {stats['upsert_failed']}")
-        if stats["truncated"]:
-            reasons.append(f"усечено до {self.max_embed_chars} символов: {stats['truncated']}")
-
-        summary = (
-            f"Ингест завершён: {upserted} точек в '{self.collection_name}', "
-            f"пропущено {skipped} (всего {total})"
-        )
-        if reasons:
-            summary += ". Причины: " + "; ".join(reasons)
-        if stats["embed_failed"] or stats["upsert_failed"]:
-            summary += (
-                ". Есть потери — повторите загрузку: идемпотентные point id "
-                "перезапишут уже загруженное и добавят недостающее"
-            )
-        if getattr(self, "_embed_error", None):
-            summary += f". Первая ошибка модели: {self._embed_error}"
+        summary = self._build_summary(upserted, skipped, total, stats)
 
         if skipped:
             self.log(summary)
