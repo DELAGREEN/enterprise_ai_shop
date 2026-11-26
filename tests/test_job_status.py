@@ -112,13 +112,27 @@ class ApplyJobStatusTests(unittest.TestCase):
         self.assertFalse(changed)
 
 
+class FakeClaimResult:
+    """Результат атомарного захвата: rowcount=1 — мы первые."""
+
+    def __init__(self, rowcount=1):
+        self.rowcount = rowcount
+
+
 class FakeDb:
-    def __init__(self, chat=None):
+    def __init__(self, chat=None, claim=True):
         self.chat = chat
         self.added = []
+        self.claim = claim
+        self.claims = 0
 
     async def get(self, model, key):
         return self.chat if model is Chat else None
+
+    async def execute(self, stmt):
+        # Единственный execute в save_job_history — захват права на запись.
+        self.claims += 1
+        return FakeClaimResult(1 if self.claim else 0)
 
     def add(self, obj):
         self.added.append(obj)
@@ -197,6 +211,42 @@ class SaveJobHistoryTests(unittest.TestCase):
 
         log = db.added[1]
         self.assertEqual(log.question, "📎 gost.docx")
+
+    def test_claim_goes_to_database_not_memory(self):
+        # Гарантия от дублей должна быть в БД: у каждого воркера uvicorn
+        # свой процесс и своя копия объекта job, поэтому проверка
+        # history_saved в памяти от гонки не спасает.
+        db = FakeDb(Chat(id="chat-1", flow_id="flow-1", user_id="u", title="t"))
+        job = self._job()
+
+        asyncio.run(save_job_history(db, job))
+
+        self.assertEqual(db.claims, 1, "право на запись должно забираться в БД")
+
+    def test_lost_claim_writes_nothing(self):
+        # Другой воркер успел первым: UPDATE вернул rowcount=0.
+        # Ни сообщения, ни журнала — иначе в чате появляется второй ответ.
+        db = FakeDb(Chat(id="chat-1", flow_id="flow-1", user_id="u", title="t"),
+                    claim=False)
+        job = self._job()
+
+        changed = asyncio.run(save_job_history(db, job))
+
+        self.assertFalse(changed)
+        self.assertEqual(db.added, [])
+        self.assertFalse(job.history_saved)
+
+    def test_repeat_call_after_success_is_noop(self):
+        # Поллер и опрос из UI могут вызвать функцию почти одновременно
+        # в одном процессе — второй вызов не должен ничего добавлять.
+        db = FakeDb(Chat(id="chat-1", flow_id="flow-1", user_id="u", title="t"))
+        job = self._job()
+
+        self.assertTrue(asyncio.run(save_job_history(db, job)))
+        self.assertFalse(asyncio.run(save_job_history(db, job)))
+
+        self.assertEqual(len(db.added), 2)   # один ответ + один журнал
+        self.assertEqual(db.claims, 1)
 
 
 class BuildInputValueTests(unittest.TestCase):

@@ -8,7 +8,7 @@ import httpx
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import config
@@ -217,13 +217,40 @@ def apply_job_status(job: ProcessingJob, lf: dict) -> bool:
     return changed
 
 
+async def _claim_history(db: AsyncSession, job: ProcessingJob) -> bool:
+    """Атомарно «забирает» право записать результат в историю.
+
+    Проверки ``job.history_saved`` в памяти недостаточно: приложение
+    запущено с несколькими воркерами uvicorn, у каждого свой процесс, своя
+    сессия и свой поллер задач. Все они видят ``history_saved = False``
+    и все пишут сообщение — в чате появляется по 3 одинаковых ответа.
+
+    Поэтому решение принимает БД: ``UPDATE ... WHERE history_saved = false``.
+    Строка блокируется до коммита, конкурент после коммита видит уже
+    ``true`` и получает ``rowcount = 0``. Запись делает только победитель.
+    """
+    result = await db.execute(
+        update(ProcessingJob)
+        .where(ProcessingJob.id == job.id)
+        .where(ProcessingJob.history_saved.is_(False))
+        .values(history_saved=True)
+        .execution_options(synchronize_session=False)
+    )
+    if not result.rowcount:
+        return False
+    # Держим объект в памяти согласованным с БД, чтобы повторный вызов
+    # в этом же процессе не пошёл в базу зря.
+    job.history_saved = True
+    return True
+
+
 async def save_job_history(db: AsyncSession, job: ProcessingJob) -> bool:
     """Переносит результат файловой задачи в историю чата.
 
     Файлы обрабатываются в фоне, поэтому ответ пишется в ``chat_messages``
-    не сразу, а когда задача дошла до финального статуса. ``history_saved``
-    защищает от повторной записи (поллер и опрос из UI могут сработать
-    почти одновременно).
+    не сразу, а когда задача дошла до финального статуса. Право на запись
+    забирается атомарно в БД (см. ``_claim_history``): иначе поллеры разных
+    воркеров пишут один и тот же результат по несколько раз.
 
     Возвращает True, если что-то записали и нужен commit.
     """
@@ -233,9 +260,9 @@ async def save_job_history(db: AsyncSession, job: ProcessingJob) -> bool:
         return False
 
     chat = await db.get(Chat, job.chat_id)
-    job.history_saved = True
     if chat is None:
         logger.warning("Чат %s для job %s не найден", job.chat_id, job.id)
+        job.history_saved = True
         return True
 
     if chat.deleted_at is not None:
@@ -243,7 +270,13 @@ async def save_job_history(db: AsyncSession, job: ProcessingJob) -> bool:
         # в Langflow могли создать заново — поллер вычистит её повторно.
         chat.langflow_purged_at = None
         logger.info("Чат %s удалён, результат job %s не сохраняем", chat.id, job.id)
+        job.history_saved = True
         return True
+
+    if not await _claim_history(db, job):
+        # Другой воркер успел первым — сообщение уже пишется там.
+        logger.info("История job %s уже записывается другим процессом", job.id)
+        return False
 
     answer = ""
     if job.status == "completed" and job.result:

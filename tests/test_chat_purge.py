@@ -22,6 +22,11 @@ class FakeChat:
         self.purge_error = None
 
 
+class FakeClaimResult:
+    def __init__(self, rowcount=1):
+        self.rowcount = rowcount
+
+
 class FakeDb:
     def __init__(self, chat=None):
         self.chat = chat
@@ -30,6 +35,10 @@ class FakeDb:
 
     async def get(self, model, key):
         return self.chat
+
+    async def execute(self, stmt):
+        # Атомарный захват права на запись истории (см. _claim_history).
+        return FakeClaimResult(1)
 
     def add(self, obj):
         self.added.append(obj)
