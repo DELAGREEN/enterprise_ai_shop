@@ -764,14 +764,24 @@ class EoszRetriever(Component):
                 parent_text = parent_payload.get("text") or ""
                 if parent_text and len(parent_text) > len(text):
                     text = parent_text
-                    for field in ("page_from", "page_to", "section_path"):
+                    for field in ("page_from", "page_to", "section_path", "breadcrumb"):
                         if parent_payload.get(field):
                             payload = {**payload, field: parent_payload[field]}
                     expanded = True
                     seen_parents.add(parent_id)
 
             citation = self._citation(payload)
-            body = f"{citation}\n{text}" if self.include_citation else text
+
+            # Текст чанка уже начинается с breadcrumb: его пишет парсер в
+            # ``_emit`` (``f"{head}\n\n{body}"``). Если добавить citation
+            # сверху, заголовок задвоится — это видно в контексте и зря
+            # съедает токены промпта. Добавляем только когда его нет.
+            head = (payload.get("breadcrumb") or "").strip()
+            already_headed = bool(head) and text.lstrip().startswith(head)
+            if self.include_citation and not already_headed:
+                body = f"{citation}\n{text}"
+            else:
+                body = text
 
             results.append(
                 Data(
@@ -859,8 +869,18 @@ class EoszRetriever(Component):
             # он всегда первым. ref и hybrid сортируются по score: жёсткий
             # приоритет ref вытеснял сильно релевантные hybrid-попадания
             # (например, Приложение 9 из вопроса про аукцион).
+            #
+            # Ничьи разрешаем детерминированно (страница, затем point id):
+            # RRF часто даёт одинаковый счёт нескольким кандидатам, и без
+            # этого «первый» результат менялся от запуска к запуску —
+            # hit@1 на одном и том же наборе скакал 60–90%.
             ordered.sort(
-                key=lambda hit: (0 if hit["source"] == "exact" else 1, -hit["score"])
+                key=lambda hit: (
+                    0 if hit["source"] == "exact" else 1,
+                    -hit["score"],
+                    hit["payload"].get("page_from") or 0,
+                    str(hit["point_id"]),
+                )
             )
 
             return self._assemble(client, ordered, version, dense)
