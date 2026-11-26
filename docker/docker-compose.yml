@@ -420,7 +420,10 @@ services:
       langflow:
         condition: service_started
     healthcheck:
-      test: ["CMD-SHELL", 'python3 -c "import urllib.request, sys; r = urllib.request.urlopen(\"http://127.0.0.1:8000/health\", timeout=5); sys.exit(0 if r.status == 200 else 1)"']
+      # Порт 5001, а не 8000: uvicorn внутри контейнера слушает 5001
+      # (см. CMD в Dockerfile). С 8000 healthcheck всегда падал, и контейнер
+      # висел в статусе unhealthy, хотя приложение работало.
+      test: ["CMD-SHELL", 'python3 -c "import urllib.request, sys; r = urllib.request.urlopen(\"http://127.0.0.1:5001/health\", timeout=5); sys.exit(0 if r.status == 200 else 1)"']
       interval: 10s
       timeout: 5s
       retries: 5
