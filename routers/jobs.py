@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 import httpx
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import Response
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -95,6 +96,31 @@ def _iso_utc(value: datetime | None) -> str | None:
     if value.tzinfo is None:
         value = value.replace(tzinfo=timezone.utc)
     return value.isoformat()
+
+
+def _last_activity(job: ProcessingJob) -> datetime | None:
+    """Когда задача последний раз подавала признаки жизни.
+
+    Для запущенной — время последнего отчёта о прогрессе, для ещё не
+    подхваченной воркером — время постановки в очередь.
+    """
+    return job.progress_updated_at or job.created_at
+
+
+def _is_stale(job: ProcessingJob, minutes: int | None = None) -> bool:
+    """Зависшая задача: активна, но давно молчит.
+
+    Компоненты шлют прогресс каждые пару секунд, поэтому долгая тишина
+    означает, что воркер умер или потерял задачу. Такие записи копятся,
+    занимают очередь и мешают разобраться, что реально работает.
+    """
+    if job.status not in ("queued", "running"):
+        return False
+    minutes = config.INGEST_STALE_MINUTES if minutes is None else minutes
+    last = _last_activity(job)
+    if last is None:
+        return True
+    return (datetime.utcnow() - last) > timedelta(minutes=minutes)
 
 
 def _progress_of(job: ProcessingJob) -> dict:
@@ -644,17 +670,35 @@ async def get_job(
 async def list_jobs(
     flow_id: str | None = None,
     limit: int = 50,
+    status: str | None = None,
+    stale_only: bool = False,
     user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Список задач для админки.
+
+    ``stale_only`` — только зависшие (активные, но давно молчащие). Именно
+    они опасны: держат воркеры Langflow и создают видимость работы.
+    """
     if not user.get("is_admin"):
         raise HTTPException(403, "Admin only")
 
-    q = select(ProcessingJob).order_by(ProcessingJob.created_at.desc()).limit(limit)
+    q = select(ProcessingJob).order_by(ProcessingJob.created_at.desc())
     if flow_id:
         q = q.where(ProcessingJob.flow_id == flow_id)
+    if status:
+        q = q.where(ProcessingJob.status == status)
+    if stale_only:
+        # Фильтр по «тишине» считается в Python: порог зависит от текущего
+        # времени, и в SQL пришлось бы дублировать ту же логику.
+        q = q.where(ProcessingJob.status.in_(("queued", "running")))
+    else:
+        q = q.limit(limit)
+
     res = await db.execute(q)
     jobs = list(res.scalars().all())
+    if stale_only:
+        jobs = [j for j in jobs if _is_stale(j)][:limit]
 
     return [
         {
@@ -663,11 +707,207 @@ async def list_jobs(
             "user_id": j.user_id,
             "status": j.status,
             "progress": _progress_of(j),
+            "stale": _is_stale(j),
             "created_at": _iso_utc(j.created_at),
             "finished_at": _iso_utc(j.finished_at),
         }
         for j in jobs
     ]
+
+
+async def _stop_in_langflow(job: ProcessingJob) -> dict:
+    """Пытается остановить запуск в Langflow. Не бросает исключений.
+
+    Остановка нужна ДО удаления записи: иначе воркер Langflow продолжит
+    считать документ, хотя в БД задачи уже нет. Пара таких «призраков»
+    занимает все воркеры, и новые загрузки встают в очередь навсегда.
+    """
+    if not job.langflow_job_id:
+        return {"stopped": False, "reason": "no_langflow_job_id"}
+    if job.status not in ("queued", "running"):
+        return {"stopped": False, "reason": "already_finished"}
+    try:
+        return await LangflowClient().stop_job(job.langflow_job_id)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("stop_job для %s упал: %s", job.id, e)
+        return {"stopped": False, "reason": str(e)}
+
+
+@router.post("/jobs/{job_id}/cancel")
+async def cancel_job(
+    job_id: str,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Отменяет активную задачу, оставляя запись для истории.
+
+    В отличие от удаления, задача остаётся в таблице со статусом failed —
+    в чате появится «⚠️ Отменено администратором», и будет понятно, почему
+    загруженный файл не дал результата.
+    """
+    if not user.get("is_admin"):
+        raise HTTPException(403, "Admin only")
+
+    job = await db.get(ProcessingJob, job_id)
+    if not job:
+        raise HTTPException(404, "Job not found")
+
+    if job.status not in ("queued", "running"):
+        # Повторный клик по уже отменённой задаче — не ошибка.
+        return {
+            "job_id": job.id,
+            "cancelled": False,
+            "status": job.status,
+            "reason": "already_finished",
+        }
+
+    langflow = await _stop_in_langflow(job)
+
+    job.status = "failed"
+    job.error = "Отменено администратором"
+    job.finished_at = datetime.utcnow()
+    job.progress_eta_seconds = 0
+    await db.commit()
+    await save_job_history(db, job)
+    await db.commit()
+
+    logger.info(
+        "Задача %s отменена администратором %s (langflow: %s)",
+        job.id, user["username"], langflow,
+    )
+    return {
+        "job_id": job.id,
+        "cancelled": True,
+        "status": job.status,
+        "langflow": langflow,
+    }
+
+
+@router.delete("/jobs/{job_id}")
+async def delete_job(
+    job_id: str,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Удаляет задачу из очереди.
+
+    Активную задачу сначала останавливает в Langflow: удалить только строку
+    в БД мало — воркер продолжит работу, а прогресс будет стучаться в 404.
+
+    В историю чата ничего не пишется (в отличие от отмены): для пользователя
+    это выглядит так, будто загрузки не было.
+    """
+    if not user.get("is_admin"):
+        raise HTTPException(403, "Admin only")
+
+    job = await db.get(ProcessingJob, job_id)
+    if not job:
+        raise HTTPException(404, "Job not found")
+
+    langflow = await _stop_in_langflow(job)
+    await db.delete(job)
+    await db.commit()
+
+    logger.info(
+        "Задача %s удалена администратором %s (langflow: %s)",
+        job_id, user["username"], langflow,
+    )
+    return {"job_id": job_id, "deleted": True, "langflow": langflow}
+
+
+class PurgeStalePayload(BaseModel):
+    older_than_minutes: int | None = None
+    action: str = "delete"          # delete | cancel
+    dry_run: bool = True
+
+
+@router.post("/jobs/purge-stale")
+async def purge_stale_jobs(
+    payload: PurgeStalePayload | None = None,
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Чистит зависшие задачи — те, что молчат дольше порога.
+
+    ``dry_run`` по умолчанию True: сначала показываем, что будет затронуто,
+    и только по подтверждению чистим. Удаление активной задачи без остановки
+    в Langflow оставило бы «призрака», поэтому остановка идёт первой.
+    """
+    if not user.get("is_admin"):
+        raise HTTPException(403, "Admin only")
+
+    payload = payload or PurgeStalePayload()
+
+    if payload.action not in ("delete", "cancel"):
+        raise HTTPException(400, "action должен быть delete или cancel")
+
+    # None — «взять из конфига», а 0 или минус — ошибка. Через `or` ноль
+    # молча превратился бы в дефолт, и очистка удалила бы больше, чем просили.
+    minutes = payload.older_than_minutes
+    if minutes is None:
+        minutes = config.INGEST_STALE_MINUTES
+    if minutes < 1:
+        raise HTTPException(400, "older_than_minutes должен быть >= 1")
+
+    res = await db.execute(
+        select(ProcessingJob)
+        .where(ProcessingJob.status.in_(("queued", "running")))
+        .order_by(ProcessingJob.created_at.asc())
+    )
+    stale = [j for j in res.scalars().all() if _is_stale(j, minutes)]
+
+    preview = [
+        {
+            "job_id": j.id,
+            "user_id": j.user_id,
+            "status": j.status,
+            "progress": _progress_of(j),
+            "created_at": _iso_utc(j.created_at),
+        }
+        for j in stale
+    ]
+
+    if payload.dry_run:
+        return {
+            "dry_run": True,
+            "older_than_minutes": minutes,
+            "count": len(stale),
+            "jobs": preview,
+        }
+
+    stopped = 0
+    deleted = 0
+    for job in stale:
+        langflow = await _stop_in_langflow(job)
+        if langflow.get("stopped"):
+            stopped += 1
+        if payload.action == "cancel":
+            job.status = "failed"
+            job.error = "Отменено администратором (очистка зависших)"
+            job.finished_at = datetime.utcnow()
+            job.progress_eta_seconds = 0
+            # Пользователь загружал файл и ждал результат — честнее сказать,
+            # что задача снята, чем оставить чат молча пустым.
+            await save_job_history(db, job)
+        else:
+            await db.delete(job)
+            deleted += 1
+
+    await db.commit()
+
+    logger.info(
+        "Очистка зависших: %d задач, остановлено в Langflow %d, удалено %d (admin %s)",
+        len(stale), stopped, deleted, user["username"],
+    )
+    return {
+        "dry_run": False,
+        "older_than_minutes": minutes,
+        "action": payload.action,
+        "count": len(stale),
+        "stopped_in_langflow": stopped,
+        "deleted": deleted,
+        "jobs": preview,
+    }
 
 
 def _map_status(lf_status: str | None) -> str:

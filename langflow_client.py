@@ -592,6 +592,48 @@ class LangflowClient:
             return data or {}
 
 
+    async def stop_job(self, langflow_job_id: str) -> dict:
+        """Останавливает фоновый запуск в Langflow.
+
+        Нужно перед удалением задачи из БД: если просто убрать строку, воркер
+        Langflow продолжит считать документ, а прогресс будет стучаться в
+        404. Несколько таких «призраков» занимают все воркеры.
+
+        Возвращает ``{"stopped": bool, "reason": str}``. Уже завершившийся
+        job (404 / ``JOB_NOT_FOUND``) — не ошибка: останавливать нечего.
+        """
+        if not langflow_job_id:
+            return {"stopped": False, "reason": "no_langflow_job_id"}
+
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                r = await client.post(
+                    f"{self._api_root}/api/v2/workflows/stop",
+                    json={"job_id": langflow_job_id},
+                    headers=self.headers,
+                )
+        except httpx.HTTPError as e:
+            logger.warning("Не удалось остановить job %s: %s", langflow_job_id, e)
+            return {"stopped": False, "reason": str(e)}
+
+        if r.status_code == 200:
+            return {"stopped": True, "reason": "stopped"}
+
+        detail = _response_detail(r)
+        code = ""
+        if isinstance(detail, dict):
+            code = str(detail.get("code") or "")
+        # Задача уже закончилась — это нормальный исход, а не сбой.
+        if r.status_code == 404 or code == "JOB_NOT_FOUND":
+            return {"stopped": False, "reason": "already_finished"}
+
+        logger.warning(
+            "Langflow не остановил job %s: HTTP %s %s",
+            langflow_job_id, r.status_code, detail,
+        )
+        return {"stopped": False, "reason": str(detail)}
+
+
 def _stream_output_text(data: dict) -> str:
     """Достаёт финальный текст из события ``output`` SSE-потока Langflow."""
     content = data.get("content")

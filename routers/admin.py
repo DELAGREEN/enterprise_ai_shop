@@ -1357,6 +1357,9 @@ async def admin_ingestion(request: Request, db: AsyncSession = Depends(get_db)):
     return templates.TemplateResponse("admin_ingestion.html", {
         "request": request, "user": user, "active_menu": "ingestion",
         "flow_options": flow_options,
+        # Порог «зависшей» задачи — из конфига, чтобы UI и бэкенд считали
+        # одинаково и значение не пришлось дублировать в двух местах.
+        "stale_minutes": config.INGEST_STALE_MINUTES,
     })
 
 

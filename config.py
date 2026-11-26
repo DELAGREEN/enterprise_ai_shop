@@ -93,6 +93,13 @@ PROGRESS_BASE_URL = (
     or "http://host.docker.internal:5001"
 )
 
+# --- Очередь ингеста ---
+# Сколько минут тишины считать признаком зависшей задачи. Компоненты шлют
+# прогресс каждые progress_interval (по умолчанию 2 с), поэтому 30 минут
+# молчания — это гарантированно мёртвый запуск, а не долгий разбор.
+# Меньше 10 ставить не стоит: Docling грузит модели перед первой страницей.
+INGEST_STALE_MINUTES = int(os.getenv("INGEST_STALE_MINUTES", "30"))
+
 # --- Fallback ---
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")

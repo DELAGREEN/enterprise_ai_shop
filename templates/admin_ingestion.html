@@ -1,5 +1,32 @@
 <!-- templates/admin_ingestion.html -->
 {% extends "admin_base.html" %}
+{% block head %}
+<style>
+  .queue-bar {
+    display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+    margin: 0 0 12px; padding: 12px 14px;
+    background: var(--surface); border-radius: 10px; box-shadow: var(--shadow);
+  }
+  .queue-bar .grow { flex: 1; min-width: 220px; font-size: .85rem; color: var(--text-muted); }
+  .queue-bar label { display: flex; align-items: center; gap: 6px; font-size: .85rem; color: var(--text-muted); }
+  .queue-bar input[type=number] {
+    width: 74px; padding: 5px 8px; font-size: .9rem;
+    border: 1px solid var(--border-strong); border-radius: 6px;
+  }
+  .queue-bar button { height: 34px; }
+  .jobs-table td, .jobs-table th { vertical-align: middle; }
+  .jobs-table td:first-child, .jobs-table th:first-child { width: 28px; }
+  .badge-stale {
+    display: inline-block; margin-top: 4px; padding: 2px 8px;
+    border-radius: 999px; font-size: .72rem;
+    background: var(--warning-soft); color: var(--warning-text);
+    border: 1px solid var(--warning-border);
+  }
+  .row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+  .row-actions button { padding: 4px 10px; font-size: .8rem; height: auto; }
+  .queue-empty { color: var(--text-muted); padding: 18px; text-align: center; }
+</style>
+{% endblock %}
 {% block admin_content %}
 <h1>Загрузка файлов в Qdrant</h1>
 
@@ -20,9 +47,27 @@
   <button type="submit">Загрузить и запустить</button>
 </form>
 
+<h2>Очередь задач</h2>
+
+<div class="queue-bar">
+  <div class="grow">
+    «Зависшая» — задача в очереди или в работе, но без прогресса дольше порога.
+    Такие занимают воркеры Langflow и создают видимость работы.
+    При очистке задача сначала останавливается в Langflow, потом убирается из списка —
+    иначе воркер продолжит считать документ «в пустоту».
+  </div>
+  <label>Порог, мин
+    <input type="number" id="staleMinutes" min="1" max="1440" value="{{ stale_minutes }}">
+  </label>
+  <button type="button" class="secondary" id="purgeBtn">Очистить зависшие</button>
+  <button type="button" class="danger" id="deleteSelectedBtn">Удалить выбранные</button>
+</div>
+
 <div id="jobsTable"></div>
 
 <script>
+const STALE_MINUTES = {{ stale_minutes }};
+
 document.getElementById('ingestForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const form = new FormData();
@@ -45,25 +90,182 @@ document.getElementById('ingestForm').addEventListener('submit', async (e) => {
   refreshJobs();
 });
 
+/* ---------- действия над очередью ---------- */
+
+function selectedJobIds() {
+  return Array.from(document.querySelectorAll('.job-check:checked'))
+    .map((el) => el.value);
+}
+
+async function cancelJob(jobId) {
+  if (!confirm('Отменить задачу ' + jobId.slice(0, 8) + '…?\n\n' +
+               'В чате появится сообщение об отмене.')) return;
+  const res = await fetch(`/api/jobs/${jobId}/cancel`, {
+    method: 'POST', credentials: 'include',
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    alert('Не удалось отменить: ' + (data.detail || ('HTTP ' + res.status)));
+    return;
+  }
+  if (!data.cancelled) {
+    alert('Задача уже завершена, отменять нечего.');
+  } else if (isStopProblem(data.langflow)) {
+    // Запись отменили, но воркер мог остаться — предупреждаем честно.
+    alert('Задача отменена, но Langflow не подтвердил остановку: ' +
+          data.langflow.reason);
+  }
+  refreshJobs();
+}
+
+async function deleteJob(jobId) {
+  if (!confirm('Удалить задачу ' + jobId.slice(0, 8) + '… из очереди?\n\n' +
+               'Если она ещё выполняется, запуск будет остановлен в Langflow. ' +
+               'В истории чата ничего не останется.')) return;
+  const res = await fetch(`/api/jobs/${jobId}`, {
+    method: 'DELETE', credentials: 'include',
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    alert('Не удалось удалить: ' + (data.detail || ('HTTP ' + res.status)));
+    return;
+  }
+  if (isStopProblem(data.langflow)) {
+    alert('Запись удалена, но Langflow не подтвердил остановку: ' +
+          data.langflow.reason + '\n\nПроверьте воркеры Langflow.');
+  }
+  refreshJobs();
+}
+
+// Причины, при которых остановка не требуется: задача уже кончилась или
+// её вообще не было в Langflow. Остальное — повод предупредить.
+function isStopProblem(langflow) {
+  if (!langflow || !langflow.reason) return false;
+  return !['stopped', 'already_finished', 'no_langflow_job_id']
+    .includes(langflow.reason);
+}
+
+async function deleteSelected() {
+  const ids = selectedJobIds();
+  if (!ids.length) {
+    alert('Ничего не выбрано.');
+    return;
+  }
+  if (!confirm(`Удалить ${ids.length} задач(и)? Активные будут остановлены в Langflow.`)) return;
+
+  let failed = 0;
+  for (const id of ids) {
+    const res = await fetch(`/api/jobs/${id}`, {
+      method: 'DELETE', credentials: 'include',
+    });
+    if (!res.ok) failed += 1;
+  }
+  if (failed) alert(`Не удалось удалить: ${failed} из ${ids.length}`);
+  refreshJobs();
+}
+
+// Двухшаговая очистка: сначала предпросмотр, потом подтверждение.
+// Так администратор видит, что именно попадёт под нож, а не жмёт вслепую.
+async function purgeStale() {
+  const minutes = parseInt(document.getElementById('staleMinutes').value, 10) || STALE_MINUTES;
+
+  const preview = await fetch('/api/jobs/purge-stale', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ older_than_minutes: minutes, dry_run: true }),
+  });
+  const data = await preview.json().catch(() => ({}));
+  if (!preview.ok) {
+    alert('Ошибка: ' + (data.detail || ('HTTP ' + preview.status)));
+    return;
+  }
+  if (!data.count) {
+    alert(`Зависших задач нет (порог ${minutes} мин).`);
+    return;
+  }
+
+  const lines = data.jobs.slice(0, 8).map((j) =>
+    `• ${j.job_id.slice(0, 8)}… ${j.user_id} — ${j.status}` +
+    (j.progress && j.progress.stage ? `, ${j.progress.stage}` : '')
+  ).join('\n');
+  const more = data.count > 8 ? `\n… и ещё ${data.count - 8}` : '';
+
+  if (!confirm(`Будет очищено ${data.count} задач(и) без прогресса > ${minutes} мин:\n\n` +
+               lines + more + '\n\nПродолжить?')) return;
+
+  const res = await fetch('/api/jobs/purge-stale', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ older_than_minutes: minutes, action: 'delete', dry_run: false }),
+  });
+  const done = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    alert('Ошибка очистки: ' + (done.detail || ('HTTP ' + res.status)));
+    return;
+  }
+  alert(`Готово. Удалено: ${done.deleted}. Остановлено в Langflow: ${done.stopped_in_langflow}.`);
+  refreshJobs();
+}
+
+document.getElementById('purgeBtn').addEventListener('click', purgeStale);
+document.getElementById('deleteSelectedBtn').addEventListener('click', deleteSelected);
+
 async function refreshJobs() {
   const res = await fetch('/api/jobs?limit=50', { credentials: 'include' });
   if (!res.ok) return;
   const jobs = await res.json();
   if (!Array.isArray(jobs)) return;
-  let html = '<table><thead><tr><th>ID</th><th>Flow</th><th>Пользователь</th><th>Статус</th><th>Прогресс</th><th>Создана</th><th>Завершена</th></tr></thead><tbody>';
+
+  if (!jobs.length) {
+    document.getElementById('jobsTable').innerHTML =
+      '<div class="queue-empty">Задач пока нет.</div>';
+    return;
+  }
+
+  let html = '<table class="jobs-table"><thead><tr>' +
+    '<th><input type="checkbox" id="selectAll" title="Выбрать все"></th>' +
+    '<th>ID</th><th>Flow</th><th>Пользователь</th><th>Статус</th>' +
+    '<th>Прогресс</th><th>Создана</th><th>Завершена</th><th>Действия</th>' +
+    '</tr></thead><tbody>';
+
   for (const j of jobs) {
+    const active = j.status === 'queued' || j.status === 'running';
     html += `<tr>
+      <td><input type="checkbox" class="job-check" value="${j.job_id}"></td>
       <td><code>${j.job_id.slice(0,8)}…</code></td>
       <td><code>${j.flow_id.slice(0,8)}…</code></td>
       <td>${j.user_id}</td>
-      <td>${statusBadge(j.status)}</td>
+      <td>${statusBadge(j.status)}${j.stale ? '<div class="badge-stale">зависла</div>' : ''}</td>
       <td>${progressCell(j)}</td>
       <td>${fmtTime(j.created_at)}</td>
       <td>${j.finished_at ? fmtTime(j.finished_at) : '—'}</td>
+      <td><div class="row-actions">
+        ${active ? `<button type="button" class="secondary" data-cancel="${j.job_id}">Отменить</button>` : ''}
+        <button type="button" class="danger" data-delete="${j.job_id}">Удалить</button>
+      </div></td>
     </tr>`;
   }
   html += '</tbody></table>';
   document.getElementById('jobsTable').innerHTML = html;
+
+  // Таблица перерисовывается каждые 10 с, поэтому обработчики вешаем заново
+  // после рендера — иначе кнопки новых строк остались бы «мёртвыми».
+  document.querySelectorAll('[data-cancel]').forEach((btn) => {
+    btn.addEventListener('click', () => cancelJob(btn.dataset.cancel));
+  });
+  document.querySelectorAll('[data-delete]').forEach((btn) => {
+    btn.addEventListener('click', () => deleteJob(btn.dataset.delete));
+  });
+  const selectAll = document.getElementById('selectAll');
+  if (selectAll) {
+    selectAll.addEventListener('change', () => {
+      document.querySelectorAll('.job-check').forEach((el) => {
+        el.checked = selectAll.checked;
+      });
+    });
+  }
 }
 
 // Время приходит с сервера в UTC с явным смещением (+00:00), браузер сам
