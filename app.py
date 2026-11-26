@@ -172,50 +172,187 @@ async def _apply_migrations() -> None:
         except Exception as e:
             logger.warning("Миграция пропущена (%s): %s", stmt, e)
 
-async def _poll_jobs():
-    while True:
+
+# --- Фоновые поллеры: один ведущий на всё приложение ---
+#
+# Приложение запускается несколькими воркерами uvicorn, и каждый процесс
+# выполняет lifespan — то есть поднимает свой поллер. Четыре воркера давали
+# четырёхкратный опрос Langflow и БД на каждую активную задачу.
+#
+# Ведущего выбираем через advisory-лок Postgres: он привязан к соединению,
+# поэтому падение процесса или обрыв связи снимают лок автоматически, и
+# ведущим становится следующий освободившийся воркер.
+POLLER_LOCK_JOBS = 8_150_001
+POLLER_LOCK_PURGES = 8_150_002
+
+# Как часто не-ведущий проверяет, освободился ли лок. Это единственный его
+# запрос: пока лок занят, ни Langflow, ни таблицы задач он не трогает.
+LOCK_RETRY_SECONDS = 20
+
+
+class _LeaderLock:
+    """Держит advisory-лок Postgres, пока живёт соединение.
+
+    Лок сессионный: он снимается сам, когда соединение закрывается. Поэтому
+    «ведущий» — это не флаг в памяти, который может остаться после падения,
+    а состояние, которое БД гарантирует.
+    """
+
+    def __init__(self, key: int, name: str, engine=None):
+        self.key = key
+        self.name = name
+        self._conn = None
+        # engine передаётся явно только в тестах; в приложении берём общий.
+        self._engine = engine
+
+    @property
+    def _db(self):
+        if self._engine is not None:
+            return self._engine
+        return engine
+
+    @property
+    def held(self) -> bool:
+        return self._conn is not None
+
+    async def try_acquire(self) -> bool:
+        """Пытается стать ведущим. Не блокирует и не бросает исключений."""
+        if self._conn is not None:
+            return True
+
         try:
-            async with AsyncSessionLocal() as db:
-                res = await db.execute(
-                    select(ProcessingJob).where(
-                        or_(
-                            # Активные задачи — обновляем статус из Langflow
-                            and_(
-                                ProcessingJob.status.in_(["queued", "running"]),
-                                ProcessingJob.langflow_job_id.isnot(None),
-                            ),
-                            # Завершённые, но ещё не попавшие в историю чата.
-                            # Такой job мог закрыть другой процесс/воркер,
-                            # поэтому дозаписываем историю здесь.
-                            and_(
-                                ProcessingJob.status.in_(
-                                    ["completed", "failed", "timeout"]
-                                ),
-                                ProcessingJob.history_saved.is_(False),
-                                ProcessingJob.chat_id.isnot(None),
-                            ),
-                        )
-                    )
-                )
-                job_rows = list(res.scalars().all())
-                client = LangflowClient()
-                for job in job_rows:
-                    try:
-                        changed = False
-                        if job.status in ("queued", "running") and job.langflow_job_id:
-                            lf = await client.get_job_status(job.langflow_job_id)
-                            changed = jobs.apply_job_status(job, lf)
-                        if await jobs.save_job_history(db, job):
-                            changed = True
-                        if changed:
-                            await db.commit()
-                    except Exception as exc:
-                        logger.warning("Не удалось обновить job %s: %s", job.id, exc)
-        except asyncio.CancelledError:
-            raise
+            conn = await self._db.connect()
         except Exception as exc:
-            logger.warning("Ошибка поллера задач: %s", exc)
-        await asyncio.sleep(10)
+            logger.warning("Поллер %s: нет соединения с БД: %s", self.name, exc)
+            return False
+
+        try:
+            res = await conn.execute(
+                text("SELECT pg_try_advisory_lock(:key)"), {"key": self.key}
+            )
+            acquired = bool(res.scalar())
+        except Exception as exc:
+            logger.warning("Поллер %s: лок не взят: %s", self.name, exc)
+            await _quiet_close(conn)
+            return False
+
+        if not acquired:
+            # Лок у другого воркера — соединение больше не нужно.
+            await _quiet_close(conn)
+            return False
+
+        self._conn = conn
+        logger.info("Поллер %s: этот процесс ведущий", self.name)
+        return True
+
+    async def ensure(self) -> bool:
+        """Гарантирует, что мы ведущий. Проверяет живость соединения."""
+        if self._conn is not None:
+            try:
+                # Соединение держится нами, поэтому если оно отвечает —
+                # лок всё ещё наш. Обрыв связи освободил бы его в Postgres.
+                await self._conn.execute(text("SELECT 1"))
+                return True
+            except Exception as exc:
+                logger.warning("Поллер %s: связь с БД потеряна: %s", self.name, exc)
+                await self.release()
+        return await self.try_acquire()
+
+    async def release(self) -> None:
+        """Отдаёт лок явно, чтобы при штатном останове не ждать таймаута."""
+        conn, self._conn = self._conn, None
+        if conn is None:
+            return
+        try:
+            await conn.execute(
+                text("SELECT pg_advisory_unlock(:key)"), {"key": self.key}
+            )
+        except Exception:
+            pass  # сессия всё равно закроется и лок снимется
+        await _quiet_close(conn)
+
+
+async def _quiet_close(conn) -> None:
+    try:
+        await conn.close()
+    except Exception:
+        pass
+
+
+async def _pause(seconds: float) -> None:
+    """Пауза между итерациями поллера.
+
+    Отдельная функция, потому что тесту нужно прервать бесконечный цикл:
+    подменять ради этого `asyncio.sleep` глобально — значит ломать
+    планировщик самого asyncio.
+    """
+    await asyncio.sleep(seconds)
+
+
+async def _poll_jobs_once() -> None:
+    """Один проход: свежие статусы из Langflow + недописанная история."""
+    async with AsyncSessionLocal() as db:
+        res = await db.execute(
+            select(ProcessingJob).where(
+                or_(
+                    # Активные задачи — обновляем статус из Langflow
+                    and_(
+                        ProcessingJob.status.in_(["queued", "running"]),
+                        ProcessingJob.langflow_job_id.isnot(None),
+                    ),
+                    # Завершённые, но ещё не попавшие в историю чата.
+                    # Такой job мог закрыть другой процесс/воркер,
+                    # поэтому дозаписываем историю здесь.
+                    and_(
+                        ProcessingJob.status.in_(
+                            ["completed", "failed", "timeout"]
+                        ),
+                        ProcessingJob.history_saved.is_(False),
+                        ProcessingJob.chat_id.isnot(None),
+                    ),
+                )
+            )
+        )
+        job_rows = list(res.scalars().all())
+        client = LangflowClient()
+        for job in job_rows:
+            try:
+                changed = False
+                if job.status in ("queued", "running") and job.langflow_job_id:
+                    lf = await client.get_job_status(job.langflow_job_id)
+                    changed = jobs.apply_job_status(job, lf)
+                if await jobs.save_job_history(db, job):
+                    changed = True
+                if changed:
+                    await db.commit()
+            except Exception as exc:
+                logger.warning("Не удалось обновить job %s: %s", job.id, exc)
+
+
+async def _poll_jobs():
+    """Опрашивает Langflow — но только в одном процессе из всех воркеров."""
+    lock = _LeaderLock(POLLER_LOCK_JOBS, "задачи")
+    try:
+        while True:
+            try:
+                if not await lock.ensure():
+                    # Ведущий — другой воркер. Ничего не опрашиваем,
+                    # просто ждём, пока лок освободится.
+                    await _pause(LOCK_RETRY_SECONDS)
+                    continue
+                await _poll_jobs_once()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning("Ошибка поллера задач: %s", exc)
+                # Не знаем, жива ли сессия с локом после ошибки — начинаем
+                # выборы заново, это дешевле, чем потерять ведущего.
+                await lock.release()
+                await _pause(LOCK_RETRY_SECONDS)
+                continue
+            await _pause(10)
+    finally:
+        await lock.release()
 
 
 async def _poll_chat_purges():
@@ -225,16 +362,26 @@ async def _poll_chat_purges():
     следом — здесь же подхватываются неудавшиеся попытки (Langflow лежал,
     сеть отвалилась, флоу принадлежит другому пользователю Langflow).
     """
-    while True:
-        try:
-            count = await chat_purge.purge_pending()
-            if count:
-                logger.info("Память удалённых чатов вычищена: %s", count)
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            logger.warning("Ошибка поллера чистки чатов: %s", exc)
-        await asyncio.sleep(60)
+    lock = _LeaderLock(POLLER_LOCK_PURGES, "чистка чатов")
+    try:
+        while True:
+            try:
+                if not await lock.ensure():
+                    await _pause(LOCK_RETRY_SECONDS)
+                    continue
+                count = await chat_purge.purge_pending()
+                if count:
+                    logger.info("Память удалённых чатов вычищена: %s", count)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning("Ошибка поллера чистки чатов: %s", exc)
+                await lock.release()
+                await _pause(LOCK_RETRY_SECONDS)
+                continue
+            await _pause(60)
+    finally:
+        await lock.release()
 
 
 @asynccontextmanager

@@ -60,5 +60,5 @@ CMD ["venv/bin/python", "-m", \
      "--port", "5001", \
      "--proxy-headers", \
      "--forwarded-allow-ips", "*", \
-    "--workers", "4"]
+     "--workers", "2"]
 #CMD ["tail", "-f", "/dev/null"]
