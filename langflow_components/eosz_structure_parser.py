@@ -185,13 +185,14 @@ class EoszStructureParser(Component):
             info=(
                 "Размер child-чанка (то, что эмбеддится и ищется). Для "
                 "нормативки 250–400 — рабочий диапазон: пункт целиком, но без "
-                "склейки соседних статей."
+                "склейки соседних статей. Лимит считается по готовому тексту, "
+                "вместе с breadcrumb."
             ),
         ),
         IntInput(
             name="max_parent_tokens",
             display_name="Max parent tokens",
-            value=1800,
+            value=2000,
             info=(
                 "Размер parent-чанка в токенах tiktoken. Parent не ищется "
                 "вектором, но ингест его всё равно эмбеддит, поэтому реальный "
@@ -201,13 +202,17 @@ class EoszStructureParser(Component):
         IntInput(
             name="max_parent_chars",
             display_name="Max parent chars",
-            value=2000,
+            value=3000,
             info=(
-                "Жёсткий лимит parent в символах. Нужен из-за модели "
-                "эмбеддингов: у Qwen3-Embedding-0.6B max_model_len=1024 "
-                "токена, а русский юридический текст даёт ~2400–2800 символов "
-                "на этот лимит. 2000 — безопасный запас. Если поднимете "
-                "--max-model-len у vLLM до 4096, увеличьте и это значение."
+                "Жёсткий лимит parent в символах. Считается от двух вещей. "
+                "Модель эмбеддингов: у Qwen3-Embedding-0.6B теперь "
+                "max_model_len=4096 токенов, а русский юридический текст даёт "
+                "~2.1 символа на токен даже на плотных таблицах — 3000 "
+                "символов это ~1400 токенов, запас больше двух раз. "
+                "Контекст генерации: vLLM-generate стоит на 12288 токенов, "
+                "ретривер тянет 4 parent + 4 child, и при 3000 символах "
+                "промпт занимает ~10k — ещё помещается. Если поднимете "
+                "max_model_len у vLLM-generate, можно поднимать и это."
             ),
         ),
         IntInput(
@@ -537,6 +542,30 @@ class EoszStructureParser(Component):
             return
 
         head = self._breadcrumb(meta, page_from, page_to)
+
+        # Последняя линия обороны: чанк не должен превышать лимит вместе с
+        # breadcrumb. Нарезка в _chunk_parts резервирует место под заголовок,
+        # но есть пути (таблицы, повтор вводной фразы, склейка предложений
+        # в _hard_split), где бюджет считается иначе. Договариваться с
+        # каждым из них хрупко — проще проверить здесь, в единственной точке,
+        # где текст окончательно собирается.
+        if chunk_type == "child":
+            limit = self.max_child_tokens
+            probe = f"{head}\n\n{body}"
+            if self.count_tokens(probe) > limit:
+                body = self._trim_body_to_limit(head, body, limit)
+                probe = f"{head}\n\n{body}"
+                # Токены не аддитивны: на стыке «заголовок + разделитель +
+                # тело» BPE может дать на токен больше, чем сумма частей.
+                # Поэтому добиваем по фактическому замеру собранной строки.
+                guard = 0
+                while self.count_tokens(probe) > limit and body and guard < 8:
+                    over = self.count_tokens(probe) - limit
+                    ratio = len(body) / max(1, self.count_tokens(body))
+                    body = body[: -max(1, int(over * ratio) + 1)].rstrip()
+                    probe = f"{head}\n\n{body}"
+                    guard += 1
+
         text = f"{head}\n\n{body}"
 
         data = dict(meta)
@@ -561,6 +590,41 @@ class EoszStructureParser(Component):
             if k not in ("clause_number", "part", "row_range", "row_index")
         }
         return {"texts": [], "tokens": 0, "chars": 0, "meta": cleaned, "pages": []}
+
+    def _trim_body_to_limit(self, head: str, body: str, limit: int) -> str:
+        """Укорачивает тело чанка так, чтобы ``head + body`` влезло в лимит.
+
+        Режем по границам предложений, а не «как получится»: обрубок
+        посреди слова портит и эмбеддинг, и цитату в ответе. Если уложиться
+        не удалось (слишком длинное предложение), падаем в ``_hard_split``.
+        """
+        budget = limit - self.count_tokens(head) - 2   # 2 — разделитель "\\n\\n"
+        if budget <= 0:
+            return body
+
+        kept: list[str] = []
+        used = 0
+        for sentence in re.split(r"(?<=[.!?;:])\s+", body):
+            n = self.count_tokens(sentence)
+            if used + n > budget:
+                break
+            kept.append(sentence)
+            used += n
+
+        if kept:
+            return " ".join(kept).strip()
+
+        # Ни одно предложение не влезло — режем по токенам.
+        parts = self._hard_split(body, budget)
+        piece = parts[0] if parts else body
+
+        # `_hard_split` считает длину куска через среднее «символов на
+        # токен», поэтому может промахнуться на пару токенов. Добиваем
+        # точно, по фактическому замеру.
+        while piece and self.count_tokens(piece) > budget:
+            ratio = len(piece) / max(1, self.count_tokens(piece))
+            piece = piece[: max(1, int(len(piece) - budget * ratio * 0.1))]
+        return piece
 
     def _accumulate_parent(self, body: str, meta: dict, page_from, page_to) -> None:
         """Копит текст child-чанков в parent до лимита токенов или символов.
@@ -746,14 +810,19 @@ class EoszStructureParser(Component):
             chunks.append(" ".join(buf).strip())
         return [c for c in chunks if c]
 
-    def _chunk_parts(self, parts: list[str], lead: str) -> list[str]:
+    def _chunk_parts(self, parts: list[str], lead: str, reserve: int = 0) -> list[str]:
         """Группирует абзацы пункта в чанки, повторяя вводную фразу.
 
         Подпункты «а)–е)» без вводной фразы («Стандарт не применяется
         заказчиками…») теряют смысл, поэтому lead повторяется в каждом
         чанке, кроме первого.
+
+        ``reserve`` — сколько токенов займёт breadcrumb в готовом чанке.
+        Раньше лимит считался по «голому» тексту, а заголовок добавлялся в
+        ``_emit`` уже после нарезки: в итоге 51% чанков выходили длиннее
+        ``max_child_tokens`` (p50 355 при лимите 350, максимум 1781).
         """
-        max_tokens = max(80, self.max_child_tokens)
+        max_tokens = max(80, self.max_child_tokens - reserve)
         chunks: list[str] = []
         buf: list[str] = []
         cur = 0
@@ -857,7 +926,14 @@ class EoszStructureParser(Component):
         # Вводная фраза пункта повторяется в каждом чанке с подпунктами.
         lead = parts[0][:250].strip() if len(parts) > 1 else ""
 
-        for part in self._chunk_parts(parts, lead):
+        # Breadcrumb дописывается в _emit уже после нарезки, поэтому его
+        # место надо зарезервировать здесь — иначе готовый чанк вылезет
+        # за max_child_tokens.
+        reserve = self.count_tokens(
+            self._breadcrumb(meta, clause["page_from"], clause["page_to"])
+        ) + 2
+
+        for part in self._chunk_parts(parts, lead, reserve=reserve):
             self._emit(
                 part,
                 meta,
@@ -886,7 +962,8 @@ class EoszStructureParser(Component):
             meta["refs_raw"] = refs_raw
             meta["ref_keys"] = ref_keys
 
-        for part in self._chunk_parts([body], ""):
+        reserve = self.count_tokens(self._breadcrumb(meta, None, None)) + 2
+        for part in self._chunk_parts([body], "", reserve=reserve):
             self._emit(part, meta, chunk_type="child", page_from=None, page_to=None)
 
     # ------------------------------------------------------------- таблицы ---
@@ -1142,9 +1219,14 @@ class EoszStructureParser(Component):
 
                 identity = " | ".join(cell for cell in row[:2] if cell).strip()[:160]
                 prefix = f"{identity}\n" if identity else ""
+                # prefix добавляется к каждому куску после нарезки, поэтому
+                # его токены вычитаем из бюджета — иначе «портянка» вылезает
+                # за max_child_tokens ровно на длину привязки к пункту.
+                prefix_tokens = self.count_tokens(prefix) if prefix else 0
                 for part_index, sub in enumerate(
                     self._hard_split(
-                        head + "\n" + line + note_block, self.max_child_tokens
+                        head + "\n" + line + note_block,
+                        self.max_child_tokens - prefix_tokens,
                     )
                 ):
                     chunk_meta = dict(meta)
