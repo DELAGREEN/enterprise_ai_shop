@@ -270,16 +270,32 @@
     .attach-hint.error { color: var(--danger-text); }
     .attach-hint:empty { display: none; }
     .job-status {
-        display: flex; align-items: center; gap: 8px;
+        display: flex; align-items: flex-start; gap: 8px;
         font-size: .9rem; color: var(--text-muted);
     }
     .job-status .spinner {
-        width: 14px; height: 14px;
+        width: 14px; height: 14px; margin-top: 3px; flex: none;
         border: 2px solid var(--border-strong);
         border-top-color: var(--primary);
         border-radius: 50%;
         animation: spin .8s linear infinite;
     }
+    .job-status .job-body {
+        display: flex; flex-direction: column; gap: 5px; min-width: 0;
+    }
+    .job-status .job-bar {
+        width: 200px; max-width: 100%; height: 4px;
+        background: var(--surface-3);
+        border-radius: 999px; overflow: hidden;
+    }
+    .job-status .job-bar-fill {
+        height: 100%; width: 0;
+        background: var(--primary);
+        border-radius: 999px;
+        transition: width .4s ease;
+    }
+    .job-status .job-meta { font-size: .78rem; }
+    .job-status .job-stale { font-size: .78rem; color: var(--danger-text); }
     @keyframes spin { to { transform: rotate(360deg); } }
 </style>
 {% endblock %}
@@ -923,6 +939,82 @@ function formatSize(bytes) {
     return (bytes / (1024 * 1024)).toFixed(1) + ' МБ';
 }
 
+// Стадии идут в том порядке, в котором их проходит документ.
+const STAGE_LABELS = {
+    parsing: 'разбор PDF',
+    chunking: 'нарезка',
+    embedding: 'эмбеддинги',
+    upserting: 'запись в Qdrant',
+    done: 'готово',
+};
+
+// «осталось ~4 мин (≈ 14:32)». Время окончания считает сервер — оно не
+// устаревает между опросами, в отличие от «осталось N секунд».
+function etaText(p) {
+    if (!p.eta_seconds || p.eta_seconds <= 0) return '';
+    let left;
+    if (p.eta_seconds < 60) {
+        left = 'меньше минуты';
+    } else if (p.eta_seconds < 3600) {
+        left = Math.round(p.eta_seconds / 60) + ' мин';
+    } else {
+        const h = Math.floor(p.eta_seconds / 3600);
+        const m = Math.round((p.eta_seconds % 3600) / 60);
+        left = h + ' ч' + (m ? ' ' + m + ' мин' : '');
+    }
+    let at = '';
+    if (p.eta_at) {
+        const d = new Date(p.eta_at);
+        at = ' (≈ ' + String(d.getHours()).padStart(2, '0') + ':' +
+             String(d.getMinutes()).padStart(2, '0') + ')';
+    }
+    return `осталось ~${left}${at}`;
+}
+
+// Перерисовывает индикатор задачи по данным прогресса из /api/jobs/{id}.
+// Пока компонент не прислал ни одного отчёта, percent == null — тогда
+// показываем только стадию, без пустой полоски.
+function renderJobProgress(statusEl, job) {
+    const p = job.progress || {};
+    const stageEl = statusEl.querySelector('.job-stage');
+    const barEl = statusEl.querySelector('.job-bar');
+    const fillEl = statusEl.querySelector('.job-bar-fill');
+    const metaEl = statusEl.querySelector('.job-meta');
+    const staleEl = statusEl.querySelector('.job-stale');
+
+    if (job.status === 'queued') {
+        stageEl.textContent = 'В очереди…';
+    } else if (p.stage) {
+        stageEl.textContent = 'Обработка: ' + (STAGE_LABELS[p.stage] || p.stage);
+    } else {
+        stageEl.textContent = 'Обработка…';
+    }
+
+    if (p.percent == null) {
+        barEl.style.display = 'none';
+        metaEl.textContent = p.message || '';
+    } else {
+        barEl.style.display = '';
+        fillEl.style.width = p.percent + '%';
+        const counts = p.total
+            ? `${p.done} / ${p.total} (${p.percent}%)`
+            : `${p.percent}%`;
+        const eta = (job.status === 'running' && p.stage !== 'done')
+            ? etaText(p) : '';
+        metaEl.textContent = counts + (eta ? ' · ' + eta : '');
+    }
+
+    // Долго нет обновлений — это зависший воркер, а не «всё хорошо».
+    let stale = '';
+    if (p.updated_at) {
+        const ageSec = (Date.now() - new Date(p.updated_at).getTime()) / 1000;
+        if (ageSec > 120) {
+            stale = `нет обновлений ${Math.round(ageSec / 60)} мин`;
+        }
+    }
+    staleEl.textContent = stale;
+}
+
 /* Отправка с файлами */
 async function submitWithFiles(files, text) {
     lastUserMessageText = text;
@@ -966,7 +1058,14 @@ async function submitWithFiles(files, text) {
     botDiv.innerHTML = '';
     const status = document.createElement('div');
     status.className = 'job-status';
-    status.innerHTML = '<div class="spinner"></div><span>Файлы обрабатываются…</span>';
+    status.innerHTML =
+        '<div class="spinner"></div>' +
+        '<div class="job-body">' +
+        '  <span class="job-stage">Файлы обрабатываются…</span>' +
+        '  <div class="job-bar" style="display:none;"><div class="job-bar-fill"></div></div>' +
+        '  <div class="job-meta"></div>' +
+        '  <div class="job-stale"></div>' +
+        '</div>';
     botDiv.appendChild(status);
     scrollBottom();
 
@@ -978,8 +1077,7 @@ async function submitWithFiles(files, text) {
             const job = await r.json();
 
             if (job.status === 'queued' || job.status === 'running') {
-                status.querySelector('span').textContent =
-                    job.status === 'queued' ? 'В очереди…' : 'Обработка…';
+                renderJobProgress(status, job);
                 return;
             }
 
