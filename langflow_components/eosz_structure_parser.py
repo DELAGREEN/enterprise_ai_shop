@@ -88,6 +88,102 @@ REF_PATTERNS = (
 LABEL_PAGE_FURNITURE = {"page_header", "page_footer", "document_index"}
 
 
+def split_words(text: str, step_chars: int) -> list[str]:
+    """Режет текст на куски ~``step_chars``, не разрывая слов.
+
+    Для «портянок» — строк таблиц, которые сами длиннее лимита чанка.
+    Резать по символам нельзя: в коллекции ЕОСЗ так появлялись обрывки
+    «осуществляетс», «классификаци», «распоря» (634 чанка из 5003, 13 %).
+    Такой обрывок не находится поиском и делает цитату в ответе неверной.
+
+    Если пробела в куске нет (одно слово длиннее лимита), режем по
+    символам — иначе шаг станет нулевым и цикл не закончится.
+    """
+    step = max(1, int(step_chars))
+    length = len(text)
+    parts: list[str] = []
+    pos = 0
+
+    while pos < length:
+        end = min(pos + step, length)
+        # Середина слова: отступаем к последнему пробелу перед границей.
+        # Ищем по всему окну, а не только во второй половине: иначе на
+        # тексте без пробелов у границы («слово15») кусок всё равно рвётся
+        # посреди слова, а «)» уезжает в отдельный чанк.
+        if end < length and not text[end - 1].isspace() and not text[end].isspace():
+            cut = text.rfind(" ", pos, end)
+            if cut > pos:
+                end = cut
+
+        piece = text[pos:end].strip()
+        if piece:
+            parts.append(piece)
+
+        pos = end
+        while pos < length and text[pos].isspace():
+            pos += 1
+
+    return parts or [text]
+
+
+def fit_breadcrumb(
+    bits: list[str], limit_tokens: int, count_tokens, segment_chars: int = 40
+) -> str:
+    """Собирает заголовок-хлебную крошку, укладываясь в лимит токенов.
+
+    Заголовок входит в тот же бюджет, что и тело чанка. В Приложении 10
+    путь «ГЛАВА 1 › РАЗДЕЛ 1 › подраздел» занимал 577 символов при лимите
+    350 токенов: на тело не оставалось места, ``_trim_body_to_limit``
+    возвращал пустую строку, и в индекс уходил чанк из одной шапки без
+    содержания (61 такой чанк). Найти в нём ответ нельзя, но по векторам
+    он похож на заголовок вопроса — то есть вытесняет полезные фрагменты.
+
+    Режем аккуратно, сначала самое дешёвое:
+
+    1. укорачиваем длинные названия до ``segment_chars`` — номер
+       («Приложение 10», «п. 1.6») стоит в начале сегмента и уцелевает,
+       теряется только хвост названия;
+    2. если всё равно не влезло — выбрасываем середину пути (ГЛАВА,
+       РАЗДЕЛ): они самые длинные и самые бесполезные для цитаты;
+    3. в крайнем случае — по символам.
+    """
+    items = [bit.strip() for bit in bits if bit and bit.strip()]
+    if not items:
+        return ""
+
+    def build(parts: list[str]) -> str:
+        return " › ".join(parts)
+
+    # Быстрый путь: символов меньше, чем токенов в лимите, — точно влезает
+    # (в русском тексте токен всегда короче символа).
+    if len(build(items)) <= limit_tokens:
+        return build(items)
+
+    result = [
+        item[:segment_chars].rstrip(" .,;:") + "…" if len(item) > segment_chars else item
+        for item in items
+    ]
+
+    # Середина пути: всё между «документом» и последними двумя сегментами.
+    if len(result) > 3 and count_tokens(build(result)) > limit_tokens:
+        middle = result[1:-2]
+        while middle and count_tokens(build(result[:1] + middle + result[-2:])) > limit_tokens:
+            # Выбрасываем с конца: последние сегменты точнее, а «ГЛАВА 1.
+            # ОСОБЫЕ ЗАКУПОЧНЫЕ СИТУАЦИИ» для цитаты бесполезнее, чем
+            # «Приложение 10».
+            middle.pop()
+        candidate = result[:1] + middle + result[-2:]
+        if count_tokens(build(candidate)) <= limit_tokens:
+            result = candidate
+
+    text = build(result)
+    # Последняя мера — по символам. Срабатывает только на патологии.
+    while len(text) > 40 and count_tokens(text) > limit_tokens:
+        text = text[: int(len(text) * 0.85)].rstrip()
+
+    return text
+
+
 class EoszStructureParser(Component):
     display_name = "EOSZ Structure Parser (B+C)"
     description = (
@@ -532,7 +628,18 @@ class EoszStructureParser(Component):
                 bits.append(f"стр. {page_from}–{page_to}")
             else:
                 bits.append(f"стр. {page_from}")
-        return " › ".join(bits)
+        return fit_breadcrumb(bits, self._breadcrumb_limit(), self.count_tokens)
+
+    def _breadcrumb_limit(self) -> int:
+        """Сколько токенов можно отдать заголовку.
+
+        Четверть детского лимита: заголовок нужен для цитаты, а не для
+        поиска. При ``max_child_tokens`` = 350 это 87 токенов — хватает на
+        «документ › приложение › пункт › страница», но не на весь путь из
+        Приложения 10, где одни названия разделов занимают 500+ символов
+        и съедали весь бюджет тела.
+        """
+        return max(40, int(self.max_child_tokens) // 4)
 
     # ------------------------------------------------------------ emission ---
 
@@ -565,6 +672,19 @@ class EoszStructureParser(Component):
                     body = body[: -max(1, int(over * ratio) + 1)].rstrip()
                     probe = f"{head}\n\n{body}"
                     guard += 1
+
+                # Тело вырезано целиком: в индекс ушла бы одна шапка. Такой
+                # чанк не содержит ответа, но по вектору похож на заголовок
+                # вопроса и вытесняет полезные фрагменты. Причина — заголовок
+                # длиннее бюджета; её снимает _breadcrumb_limit, а этот
+                # предохранитель не даёт мусору попасть в коллекцию, если
+                # лимит снова разъедется.
+                if not body.strip():
+                    self.log(
+                        "пропущен чанк без тела (заголовок съел бюджет): "
+                        f"{head[:120]}"
+                    )
+                    return
 
         text = f"{head}\n\n{body}"
 
@@ -600,7 +720,10 @@ class EoszStructureParser(Component):
         """
         budget = limit - self.count_tokens(head) - 2   # 2 — разделитель "\\n\\n"
         if budget <= 0:
-            return body
+            # Заголовок сам не влезает в лимит — тела не останется вовсе.
+            # Возвращаем пустую строку, чтобы _emit не отправил в индекс
+            # чанк из одной шапки.
+            return ""
 
         kept: list[str] = []
         used = 0
@@ -793,8 +916,9 @@ class EoszStructureParser(Component):
                 continue
             chars_per_token = max(1, len(sentence) // max(1, self.count_tokens(sentence)))
             step = max(1, max_tokens * chars_per_token)
-            for i in range(0, len(sentence), step):
-                parts.append(sentence[i : i + step])
+            # Режем по границам слов: обрывок посреди слова («классификаци»,
+            # «распоря») не находится поиском и портит цитату.
+            parts.extend(split_words(sentence, step))
 
         chunks: list[str] = []
         buf: list[str] = []

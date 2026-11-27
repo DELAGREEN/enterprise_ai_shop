@@ -16,7 +16,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import chat_purge
 import uploads
 from database import AsyncSessionLocal, get_db
-from langflow_client import LangflowClient, extract_output_text, parse_thinking
+from langflow_client import (
+    LangflowClient,
+    extract_output_text,
+    parse_thinking,
+    prefer_full_answer,
+)
 from models import Chat, ChatMessage, FlowPublication, LLMRequestLog, ProcessingJob
 from session import get_current_user
 from streaming import iter_flow_events, sse_pack
@@ -378,8 +383,10 @@ async def chat_send_stream(
         # и не содержать финального ответа.
         if final_text:
             final_answer, final_thinking = parse_thinking(final_text)
-            if final_answer and final_answer.strip():
-                answer = final_answer.strip()
+            # Langflow отдаёт результат сериализованным с лимитом 6000
+            # символов: длинный ответ приходит обрубком. Поток токенов
+            # полный, поэтому берём то, что длиннее.
+            answer = prefer_full_answer(answer, final_answer)
             if final_thinking and not thinking:
                 thinking = final_thinking.strip()
 

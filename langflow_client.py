@@ -714,6 +714,29 @@ class ThinkingSplitter:
         return [("answer", pending)]
 
 
+def prefer_full_answer(streamed: str, final: str) -> str:
+    """Выбирает между потоковым и финальным ответом, отдавая более полный.
+
+    Langflow сериализует результат flow с ограничением
+    ``MAX_TEXT_LENGTH = 6000`` символов: всё, что длиннее, приходит
+    обрезанным посреди слова с «...» в конце
+    (``lfx/utils/util_strings.py: truncate_long_strings``). Поток токенов
+    этим не страдает. Поэтому приоритет у длинного текста: иначе готовый
+    ответ подменялся обрубком на 6003 символа.
+
+    Длины равны — берём финальный: он прошёл через parse_thinking и не
+    содержит служебных тегов.
+    """
+    streamed = (streamed or "").strip()
+    final = (final or "").strip()
+
+    if not final:
+        return streamed
+    if not streamed:
+        return final
+    return final if len(final) >= len(streamed) else streamed
+
+
 def parse_thinking(text: str) -> tuple[str, str]:
     """Возвращает (clean_text, thinking). Поддерживает <think>...</think> и ...</think>."""
     if not text:

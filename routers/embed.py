@@ -15,7 +15,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import config
 from database import AsyncSessionLocal, get_db
 from embed_auth import validate_embed_token
-from langflow_client import LangflowClient, extract_output_text, parse_thinking
+from langflow_client import (
+    LangflowClient,
+    extract_output_text,
+    parse_thinking,
+    prefer_full_answer,
+)
 from models import Chat, ChatMessage, FlowPublication, LLMRequestLog, User, UserGroup
 from session import MAX_AGE, SESSION_COOKIE, create_session
 from streaming import iter_flow_events, sse_pack
@@ -347,11 +352,12 @@ async def embed_chat_send_stream(
         answer = "".join(answer_parts).strip()
         thinking = "".join(thinking_parts).strip()
 
-        # Событие output — источник истины (см. chat_send_stream)
+        # Событие output — источник истины (см. chat_send_stream), но
+        # Langflow отдаёт его сериализованным с лимитом 6000 символов:
+        # длинный ответ приходит обрубком. Поток токенов полный.
         if final_text:
             final_answer, final_thinking = parse_thinking(final_text)
-            if final_answer and final_answer.strip():
-                answer = final_answer.strip()
+            answer = prefer_full_answer(answer, final_answer)
             if final_thinking and not thinking:
                 thinking = final_thinking.strip()
 
