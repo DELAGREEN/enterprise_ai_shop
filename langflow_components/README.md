@@ -145,6 +145,44 @@ Langflow → **Settings → Custom Components → Create New**, вставить
 (`docling`, `tiktoken`, `fastembed`) и в базовом образе (`qdrant_client`,
 `pandas`). Ничего доустанавливать не нужно.
 
+### Обновление кубика после правки в репозитории
+
+Кубик в Langflow — это **копия** файла внутри `flow.data`. Правка в
+репозитории на работающий flow не влияет, пока код не заменят в кубике.
+Коммит «обновил парсер» сам по себе ничего не меняет в проде.
+
+Проверить и применить:
+
+```bash
+cd /home/user/rep/enterprise_ai_shop
+
+# только показать расхождения: код в кубике и значения-лимиты
+LANGFLOW_URL=http://localhost:7860/api/v1 \
+LANGFLOW_API_KEY=... \
+python3 langflow_components/sync_flows.py
+
+# записать (перед записью сохраняет копию flow в /tmp/langflow_backup)
+LANGFLOW_URL=http://localhost:7860/api/v1 \
+LANGFLOW_API_KEY=... \
+python3 langflow_components/sync_flows.py --apply --fix-values
+```
+
+`--fix-values` трогает только лимиты, привязанные к ёмкости моделей
+(`max_child_tokens`, `max_parent_chars`, `max_parent_tokens`,
+`max_embed_chars`). Остальные входы (`collection_name`, `top_k`,
+`doc_title`) у каждого документа свои, их скрипт не меняет.
+
+Почему это важно: в этой сессии в кубике парсера лежала версия без
+исправления лимита child, а в кубике ингеста — `max_embed_chars=1800` и
+`max_parent_chars=2000` при дефолтах 3600 и 3000. Код в репозитории был
+уже правильный, поэтому расхождение не замечали.
+
+Порядок после правки парсера или ингеста:
+
+1. `sync_flows.py --apply --fix-values`;
+2. переингест документа (старые чанки собраны старым кодом);
+3. `eval_retrieval.py` — сравнить hit@1 до/после.
+
 ---
 
 ## 2. Схема flow
