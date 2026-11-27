@@ -311,6 +311,49 @@ PYTHONPATH=. uvicorn app:app --host 0.0.0.0 --port 5001 --reload
 - admin: http://localhost:5001/admin
 - login: http://localhost:5001/auth/login
 
+#### Перезапуск vLLM на одной GPU
+
+Обе модели живут на одной карте (RTX 4090, 24 ГБ), и порядок старта важен:
+`vllm-generate` резервирует 0.87 от 23.5 ГиБ = 20.45 ГиБ, а
+`vllm-embedding` — 0.11 (≈2.6 ГиБ). В сумме 23.04 ГиБ, то есть запас
+меньше гигабайта. Если генератор стартует вторым, он видит 20.13 ГиБ
+свободных и падает:
+
+```
+ValueError: Free memory on device cuda:0 (20.13/23.51 GiB) on startup is
+less than desired GPU memory utilization (0.87, 20.45 GiB)
+```
+
+Поэтому в compose у `vllm-embedding` стоит
+`depends_on: vllm-generate: condition: service_healthy`. Это спасает
+`docker compose up`, но **не** спасает перезапуск одного генератора:
+`up -d vllm-generate` пересоздаст его, пока embedding держит память.
+Правильно — пересоздавать оба:
+
+```bash
+cd docker
+docker compose up -d --force-recreate vllm-generate vllm-embedding
+```
+
+Меньше 0.87 генератору давать нельзя: при 0.85 остаётся 0.1 ГиБ KV-кэша,
+а на контекст 12288 нужно 0.44 ГиБ, и vLLM отказывается стартовать.
+
+#### Reasoning у Qwen3.5 выключен на стороне сервера
+
+У `vllm-generate` стоит `--default-chat-template-kwargs
+'{"enable_thinking": false}'`. Без этого Qwen3.5 пишет в `content`
+монолог «Thinking Process: …», и при небольшом `max_tokens` ответ не
+возвращается вовсе — весь бюджет уходит в рассуждение. В чате это
+выглядело как «много мусора» и «не находит ответ»: в журнале
+`llm_request_log` два ответа были ровно по 6003 символа, и оба — текст
+размышлений. Замер после отключения: 5 токенов вместо 60, обычный ответ.
+
+Отдельно: Langflow сериализует результат flow с ограничением
+`MAX_TEXT_LENGTH = 6000` (`lfx/serialization/constants.py`), поэтому
+длинный ответ приходил обрубком с «...» на конце. Поток токенов этим не
+страдает, и приложение берёт более длинный из двух вариантов
+(`langflow_client.prefer_full_answer`).
+
 ### 4.2. Демонстрационный режим (без Langflow и vLLM)
 
 Для ручного UI-тестирования и показа интерфейса без внешних сервисов включите демо-режим:

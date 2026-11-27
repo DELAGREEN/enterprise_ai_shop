@@ -213,11 +213,24 @@ services:
             - "auto"                   
             #- "--enforce-eager"             # СПАСИТЕЛЬНЫЙ ФЛАГ: отключает компилятор графов
             - "--gpu-memory-utilization"
+            # 0.87 — это нижняя граница, а не запас. Замер: веса + активации
+            # занимают 19.88 ГиБ из 23.51, а на контекст 12288 нужно ещё
+            # 0.44 ГиБ KV-кэша. При 0.85 остаётся 0.1 ГиБ, и vLLM падает с
+            # «0.44 GiB KV cache is needed, which is larger than the available
+            # KV cache memory (0.1 GiB)».
             - "0.87"
             - "--max-model-len"
             - "12288"                       # Длина контекста
             - "--max-num-seqs"
             - "16"                         # Количество одномоментных запросов
+            # Qwen3.5 по умолчанию пишет «Thinking Process:» в content, и при
+            # малом max_tokens ответ не возвращается вовсе — весь бюджет уходит
+            # в рассуждение. В логах чата это выглядело как «много мусора» и
+            # «не находит ответ»: модель так и не доходила до ответа.
+            # Отключаем reasoning на уровне сервера, чтобы это не зависело от
+            # того, передал ли клиент chat_template_kwargs.
+            - "--default-chat-template-kwargs"
+            - '{"enable_thinking": false}'
             - "--enable-auto-tool-choice"
             - "--tool-call-parser" 
             #- "llm_planning"
