@@ -1100,6 +1100,36 @@ class EoszStructureParser(Component):
             return False
         return [int(v) for v in values] == list(range(1, len(values) + 1))
 
+    # Ячейка шапки — короткая подпись столбца. Всё, что длиннее, — данные:
+    # в нормативных таблицах заголовки это «Вид продукции», «до 10
+    # включительно», а содержимое — предложения на 60+ символов.
+    HEADER_CELL_CHARS = 60
+
+    def _row_looks_like_data(self, grid_row: list[str]) -> bool:
+        """Строка похожа на данные, а не на шапку.
+
+        Docling помечает ``column_header=True`` не только настоящую шапку:
+        на стр. 29 ЕОСЗ он пометил и первую строку данных
+        («1. Закупка продукции, влияющей на безопасность…»). Если ей
+        поверить, эта строка уходит в «Колонки:» и пропадает из данных —
+        модель видит «до 10 включительно» рядом с «запрос котировок» и
+        отвечает, что котировки возможны до 10 млн. На самом деле «до 10»
+        относится к запросу предложений и конкурсу.
+
+        Признак данных — хотя бы одна ячейка строки: длиннее
+        ``HEADER_CELL_CHARS`` или начинается с номера пункта / буквы со
+        скобкой. Достаточно одной: в такой таблице вся строка содержательная.
+        """
+        for cell in grid_row:
+            value = (cell or "").strip()
+            if not value:
+                continue
+            if len(value) > self.HEADER_CELL_CHARS:
+                return True
+            if RE_NUM_ITEM.match(value) or RE_LET_ITEM.match(value):
+                return True
+        return False
+
     def _table_grid(self, table_item, carry: dict | None = None):
         """Разворачивает ``table_cells`` в сетку, раскрывая row_span/col_span.
 
@@ -1132,6 +1162,19 @@ class EoszStructureParser(Component):
 
         if not header_rows:
             header_rows = {0}
+
+        # Docling помечает как шапку и строки данных. Возвращаем их в rows:
+        # иначе содержимое пропадает из таблицы, а его обрывки попадают в
+        # «Колонки:» и путают модель.
+        misplaced = {
+            r for r in header_rows
+            if r < n_rows and self._row_looks_like_data(grid[r])
+        }
+        remaining = header_rows - misplaced
+        if remaining:
+            header_rows = remaining
+        # Если все помеченные строки выглядят как данные, доверяем Docling:
+        # без шапки таблица теряет названия столбцов, а это хуже.
 
         header: list[str] = []
         for c in range(n_cols):
