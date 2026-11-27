@@ -328,15 +328,41 @@ less than desired GPU memory utilization (0.87, 20.45 GiB)
 `depends_on: vllm-generate: condition: service_healthy`. Это спасает
 `docker compose up`, но **не** спасает перезапуск одного генератора:
 `up -d vllm-generate` пересоздаст его, пока embedding держит память.
-Правильно — пересоздавать оба:
+Правильно — пересоздавать оба, и для этого есть скрипт:
 
 ```bash
 cd docker
-docker compose up -d --force-recreate vllm-generate vllm-embedding
+./restart-vllm.sh          # ждёт healthy до 300 с
+./restart-vllm.sh --wait 600
 ```
+
+Скрипт делает три шага: останавливает embedding, поднимает генератор,
+дождавшись его `healthy`, поднимает embedding. Замер: 2.5 минуты на всё.
 
 Меньше 0.87 генератору давать нельзя: при 0.85 остаётся 0.1 ГиБ KV-кэша,
 а на контекст 12288 нужно 0.44 ГиБ, и vLLM отказывается стартовать.
+Ужать embedding тоже не выход: ему нужно 0.11 на контекст 4096 (самый
+длинный parent в коллекции — 1464 токена), и даже при минимальной доле
+генератору всё равно не хватает 0.26 ГиБ.
+
+#### Если генератор упал: краш-луп
+
+`restart: always` поднимает контейнер снова, но подняться он не может,
+пока embedding жив, и Docker повторяет попытку бесконечно. Проверено:
+после падения `restarts` растёт, в логах каждый раз одна и та же ошибка
+про `Free memory`. Признак в `docker ps`: контейнер мигает между
+`starting` и `restarting`, `nvidia-smi` показывает память только у
+embedding.
+
+Лечится тем же скриптом:
+
+```bash
+cd docker && ./restart-vllm.sh
+```
+
+Если падения повторяются, смотреть причину в логах **до** перезапуска:
+`docker logs --tail 100 vllm-generate | grep -i 'error\|oom\|killed'`.
+
 
 #### Reasoning у Qwen3.5 выключен на стороне сервера
 
